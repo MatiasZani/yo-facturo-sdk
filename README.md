@@ -195,3 +195,7 @@ Cada SDK tiene su propio README con instrucciones de instalación, uso y tests: 
 ## Licencia
 
 [MIT](LICENSE) © 2026 YoFacturo
+
+## CI
+
+El workflow de GitHub Actions está en `ci/ci.yml.example` (no activo). Para activarlo, copiarlo a `.github/workflows/ci.yml`.
