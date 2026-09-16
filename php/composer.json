@@ -1,0 +1,29 @@
+{
+    "name": "yofacturo/yofacturo-php",
+    "description": "SDK oficial de PHP para la API de YoFacturo (facturación electrónica ARCA/AFIP para Argentina)",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["yofacturo", "afip", "arca", "facturacion-electronica", "argentina", "api"],
+    "homepage": "https://yo-facturo.com",
+    "authors": [
+        {
+            "name": "YoFacturo",
+            "email": "api@yo-facturo.com"
+        }
+    ],
+    "support": {
+        "docs": "https://yo-facturo.com/dev/",
+        "email": "api@yo-facturo.com"
+    },
+    "require": {
+        "php": ">=7.4",
+        "ext-curl": "*",
+        "ext-json": "*"
+    },
+    "autoload": {
+        "psr-4": {
+            "YoFacturo\\": "src/"
+        }
+    },
+    "minimum-stability": "stable"
+}

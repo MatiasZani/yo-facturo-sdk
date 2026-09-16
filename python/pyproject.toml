@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yofacturo"
+version = "0.1.0"
+description = "SDK oficial de Python para la API de YoFacturo (facturación electrónica ARCA/AFIP para Argentina)"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "YoFacturo", email = "api@yo-facturo.com" }]
+keywords = ["yofacturo", "afip", "arca", "facturacion-electronica", "argentina", "api"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Office/Business :: Financial :: Accounting",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.urls]
+Homepage = "https://yo-facturo.com"
+Documentation = "https://yo-facturo.com/dev/"
+"API Spec" = "https://api.yo-facturo.com/api/v1/openapi.json"
+Source = "https://github.com/yofacturo/yofacturo-sdk"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+yofacturo = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

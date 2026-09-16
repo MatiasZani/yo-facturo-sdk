@@ -1,0 +1,67 @@
+name: CI
+
+# Solo corre los tests de los 3 SDKs. No publica a PyPI/npm/Packagist.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Instalar el paquete en modo editable
+        run: pip install -e "python[dev]"
+      - name: Tests (pytest, sin red)
+        run: pytest python/tests -q
+
+  node:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Instalar devDependencies
+        run: npm --prefix node install
+      - name: Build (tsc)
+        run: npm --prefix node run build
+      - name: Tests (node:test, sin red)
+        run: npm --prefix node test
+
+  php:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+      - name: Validar composer.json
+        run: composer validate --no-check-publish php/composer.json
+      - name: Lint (php -l en cada archivo)
+        run: find php/src -name "*.php" -print0 | xargs -0 -n1 php -l
+
+  openapi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Instalar pyyaml
+        run: pip install pyyaml
+      - name: Validar que openapi.json y openapi.yaml parseen y sean equivalentes
+        run: |
+          python -c "
+          import json, yaml
+          j = json.load(open('openapi/openapi.json', encoding='utf-8'))
+          y = yaml.safe_load(open('openapi/openapi.yaml', encoding='utf-8'))
+          assert j == y, 'openapi.json y openapi.yaml quedaron desincronizados'
+          print('OK:', len(j['paths']), 'paths')
+          "
+      - name: Validar que la colección de Postman parsea
+        run: python -c "import json; json.load(open('postman/yofacturo.postman_collection.json', encoding='utf-8')); print('OK')"

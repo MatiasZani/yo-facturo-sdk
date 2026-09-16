@@ -1,0 +1,32 @@
+{
+  "name": "yofacturo",
+  "version": "0.1.0",
+  "description": "SDK oficial de Node.js/TypeScript para la API de YoFacturo (facturación electrónica ARCA/AFIP para Argentina)",
+  "license": "MIT",
+  "author": "YoFacturo <api@yo-facturo.com>",
+  "homepage": "https://yo-facturo.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yofacturo/yofacturo-sdk",
+    "directory": "node"
+  },
+  "keywords": ["yofacturo", "afip", "arca", "facturacion-electronica", "argentina", "api"],
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist/src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "pretest": "npm run build",
+    "test": "node --test dist/tests/*.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0"
+  }
+}
