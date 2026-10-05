@@ -1,6 +1,6 @@
 {
   "name": "yofacturo",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "SDK oficial de Node.js/TypeScript para la API de YoFacturo (facturación electrónica ARCA/AFIP para Argentina)",
   "license": "MIT",
   "author": "YoFacturo <api@yo-facturo.com>",

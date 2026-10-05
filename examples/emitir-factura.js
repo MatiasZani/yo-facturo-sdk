@@ -13,11 +13,12 @@ async function main() {
   const client = new YoFacturo(process.env.YOFACTURO_API_KEY);
 
   const factura = await client.invoices.create({
+    punto_venta: 1, // tu punto de venta habilitado en ARCA
     tipo_documento: 99, // Consumidor Final
     numero_documento: "0",
     razon_social: "CONSUMIDOR FINAL",
+    // precio FINAL (IVA incluido): el backend calcula neto, IVA y total
     items: [{ descripcion: "Servicio de consultoría", cantidad: 1, precio_unitario: 15000.0 }],
-    importe_total: 15000.0,
     autorizar: true, // dispara la autorización ante AFIP en segundo plano
   });
 

@@ -13,7 +13,7 @@ import { SalesResource } from "./resources/sales";
 import { errorFromResponse, YoFacturoError } from "./errors";
 
 export const DEFAULT_BASE_URL = "https://api.yo-facturo.com/api/v1";
-export const VERSION = "0.1.0";
+export const VERSION = "0.2.0";
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 

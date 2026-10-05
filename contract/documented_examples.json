@@ -1,0 +1,144 @@
+{
+  "_comment": "Request shapes published in the developer docs (/dev/invoices), the SDK READMEs/examples and openapi.json. Source of truth for the API side; the SDK repo (yo-facturo_sdk/contract/documented_examples.json) must carry the identical file (test_public_api_documented_examples.py compares them when the sibling checkout exists). Placeholders: <original_id> (an authorized comprobante), <customer_id> (a stored customer).",
+  "invoice_minimal_final_price": {
+    "issuer": "responsable_inscripto",
+    "endpoint": "invoice",
+    "body": {
+      "punto_venta": 1, "concepto": 1,
+      "tipo_documento": 99, "numero_documento": "0", "razon_social": "CONSUMIDOR FINAL",
+      "items": [{"descripcion": "Servicio de consultoría", "cantidad": 1, "precio_unitario": 15000.0}]
+    },
+    "sdk": {"call": "invoices.create", "args": [], "kwargs": {
+      "punto_venta": 1, "tipo_documento": 99, "numero_documento": "0", "razon_social": "CONSUMIDOR FINAL",
+      "items": [{"descripcion": "Servicio de consultoría", "cantidad": 1, "precio_unitario": 15000.0}]
+    }},
+    "expect": {"tipo_comprobante": 6, "importe_total": "15000.00", "importe_neto_gravado": "12396.69", "importe_iva": "2603.31"}
+  },
+  "invoice_net_prices_opt_out": {
+    "issuer": "responsable_inscripto",
+    "endpoint": "invoice",
+    "body": {
+      "punto_venta": 1, "concepto": 1,
+      "tipo_documento": 99, "numero_documento": "0", "razon_social": "CONSUMIDOR FINAL",
+      "precios_con_iva": false,
+      "items": [{"descripcion": "Producto demo", "cantidad": 1, "precio_unitario": 1000.0, "iva_id": 5}]
+    },
+    "expect": {"tipo_comprobante": 6, "importe_total": "1210.00", "importe_neto_gravado": "1000.00", "importe_iva": "210.00"}
+  },
+  "invoice_factura_c_monotributo": {
+    "issuer": "monotributo",
+    "endpoint": "invoice",
+    "body": {
+      "tipo_comprobante": 11, "punto_venta": 1, "concepto": 1,
+      "tipo_documento": 99, "numero_documento": "0", "razon_social": "CONSUMIDOR FINAL",
+      "condicion_iva_receptor_id": 5,
+      "items": [{"descripcion": "Servicio de consultoría", "cantidad": 1, "precio_unitario": 15000.0}],
+      "autorizar": true
+    },
+    "expect": {"tipo_comprobante": 11, "importe_total": "15000.00", "importe_neto_gravado": "15000.00", "importe_iva": "0.00"}
+  },
+  "invoice_factura_a_ri_receiver": {
+    "issuer": "responsable_inscripto",
+    "endpoint": "invoice",
+    "body": {
+      "tipo_comprobante": 1, "punto_venta": 1, "concepto": 1,
+      "tipo_documento": 80, "numero_documento": "30710000014", "razon_social": "Comercial Andina S.A.",
+      "condicion_iva_receptor_id": 1,
+      "items": [{"descripcion": "Servicio de consultoría", "cantidad": 1, "precio_unitario": 121000.0, "iva_id": 5}],
+      "autorizar": true
+    },
+    "expect": {"tipo_comprobante": 1, "importe_total": "121000.00", "importe_neto_gravado": "100000.00", "importe_iva": "21000.00"}
+  },
+  "invoice_line_discount": {
+    "issuer": "responsable_inscripto",
+    "endpoint": "invoice",
+    "body": {
+      "punto_venta": 1, "concepto": 1,
+      "tipo_documento": 99, "numero_documento": "0", "razon_social": "CONSUMIDOR FINAL",
+      "items": [{"descripcion": "Yerba Mate 1kg", "cantidad": 1, "precio_unitario": 1000.0, "bonificacion": 100.0, "iva_id": 5}]
+    },
+    "expect": {"tipo_comprobante": 6, "importe_total": "900.00"}
+  },
+  "invoice_bare_cuit_resolved_by_padron": {
+    "issuer": "responsable_inscripto",
+    "endpoint": "invoice",
+    "body": {
+      "punto_venta": 1, "concepto": 1,
+      "tipo_documento": 80, "numero_documento": "27333444556", "razon_social": "Ferretería Sin Condición",
+      "items": [{"descripcion": "Servicio de consultoría", "cantidad": 1, "precio_unitario": 121000.0, "iva_id": 5}]
+    },
+    "expect": {"tipo_comprobante": 1, "receptor_id": 1}
+  },
+  "invoice_receptor_condition_as_text": {
+    "issuer": "responsable_inscripto",
+    "endpoint": "invoice",
+    "body": {
+      "punto_venta": 1, "concepto": 1,
+      "tipo_documento": 80, "numero_documento": "30699999993", "razon_social": "Club Social Exento",
+      "receptor_condicion_iva": "exento",
+      "items": [{"descripcion": "Cuota social", "cantidad": 1, "precio_unitario": 5000.0, "iva_id": 5}]
+    },
+    "expect": {"tipo_comprobante": 6, "receptor_id": 4}
+  },
+  "invoice_to_stored_customer": {
+    "issuer": "responsable_inscripto",
+    "endpoint": "invoice_customer",
+    "body": {
+      "customer_id": "<customer_id>", "punto_venta": 1, "concepto": 1,
+      "items": [{"descripcion": "Servicio de consultoría", "cantidad": 1, "precio_unitario": 15000.0}]
+    },
+    "sdk": {"call": "invoices.create_for_customer", "args": ["<customer_id>"], "kwargs": {
+      "punto_venta": 1,
+      "items": [{"descripcion": "Servicio de consultoría", "cantidad": 1, "precio_unitario": 15000.0}]
+    }},
+    "expect": {"tipo_comprobante": 1, "receptor_id": 1}
+  },
+  "debit_note_items_net_with_total": {
+    "issuer": "responsable_inscripto",
+    "endpoint": "debit_note",
+    "body": {
+      "comprobante_asociado_id": "<original_id>",
+      "items": [{"descripcion": "Interés por mora", "cantidad": 1, "precio_unitario": 100.0, "iva_id": 5}],
+      "importe_total": 121.0,
+      "motivo": "Interés por mora"
+    },
+    "sdk": {"call": "invoices.debit_note", "args": ["<original_id>", [{"descripcion": "Interés por mora", "cantidad": 1, "precio_unitario": 100.0, "iva_id": 5}]], "kwargs": {
+      "importe_total": 121.0, "motivo": "Interés por mora"
+    }},
+    "expect": {"tipo_comprobante": 7, "importe_total": "121.00", "importe_neto_gravado": "100.00", "importe_iva": "21.00"}
+  },
+  "credit_note_total": {
+    "issuer": "responsable_inscripto",
+    "endpoint": "credit_note",
+    "body": {"comprobante_asociado_id": "<original_id>", "motivo": "Anulación de la operación"},
+    "sdk": {"call": "invoices.credit_note", "args": ["<original_id>"], "kwargs": {"motivo": "Anulación de la operación"}},
+    "expect": {"importe_total": "2420.00"}
+  },
+  "credit_note_by_lines": {
+    "issuer": "responsable_inscripto",
+    "endpoint": "credit_note",
+    "body": {"comprobante_asociado_id": "<original_id>", "lineas": [{"linea": 1, "cantidad": 1}], "motivo": "Devolución parcial de mercadería"},
+    "sdk": {"call": "invoices.credit_note", "args": ["<original_id>"], "kwargs": {
+      "lineas": [{"linea": 1, "cantidad": 1}], "motivo": "Devolución parcial de mercadería"
+    }},
+    "expect": {"importe_total": "605.00"}
+  },
+  "credit_note_by_amount": {
+    "issuer": "responsable_inscripto",
+    "endpoint": "credit_note",
+    "body": {"comprobante_asociado_id": "<original_id>", "importe_a_acreditar": 605.0, "motivo": "Bonificación posterior a la venta"},
+    "sdk": {"call": "invoices.credit_note", "args": ["<original_id>"], "kwargs": {
+      "importe_a_acreditar": 605.0, "motivo": "Bonificación posterior a la venta"
+    }},
+    "expect": {"importe_total": "605.00"}
+  },
+  "credit_note_by_percentage": {
+    "issuer": "responsable_inscripto",
+    "endpoint": "credit_note",
+    "body": {"comprobante_asociado_id": "<original_id>", "porcentaje_aplicar": 50, "motivo": "Devolución parcial de mercadería"},
+    "sdk": {"call": "invoices.credit_note", "args": ["<original_id>"], "kwargs": {
+      "porcentaje_aplicar": 50, "motivo": "Devolución parcial de mercadería"
+    }},
+    "expect": {"importe_total": "1210.00"}
+  }
+}

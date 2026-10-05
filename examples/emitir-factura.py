@@ -12,13 +12,14 @@ from yofacturo import YoFacturo
 client = YoFacturo(api_key=os.environ["YOFACTURO_API_KEY"])
 
 factura = client.invoices.create(
+    punto_venta=1,  # tu punto de venta habilitado en ARCA
     tipo_documento=99,  # Consumidor Final
     numero_documento="0",
     razon_social="CONSUMIDOR FINAL",
     items=[
+        # precio FINAL (IVA incluido): el backend calcula neto, IVA y total
         {"descripcion": "Servicio de consultoría", "cantidad": 1, "precio_unitario": 15000.00},
     ],
-    importe_total=15000.00,
     autorizar=True,  # dispara la autorización ante AFIP en segundo plano
 )
 

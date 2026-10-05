@@ -48,6 +48,7 @@ from yofacturo import YoFacturo
 client = YoFacturo(api_key="yf_live_...")
 
 factura = client.invoices.create(
+    punto_venta=1,  # tu punto de venta habilitado en ARCA
     tipo_documento=99,  # Consumidor Final
     numero_documento="0",
     razon_social="CONSUMIDOR FINAL",
@@ -67,6 +68,7 @@ import { YoFacturo } from "yofacturo";
 const client = new YoFacturo("yf_live_...");
 
 const factura = await client.invoices.create({
+  punto_venta: 1, // tu punto de venta habilitado en ARCA
   tipo_documento: 99, // Consumidor Final
   numero_documento: "0",
   razon_social: "CONSUMIDOR FINAL",
@@ -86,6 +88,7 @@ use YoFacturo\Client;
 $client = new Client('yf_live_...');
 
 $factura = $client->invoices->create([
+    'punto_venta' => 1, // tu punto de venta habilitado en ARCA
     'tipo_documento' => 99, // Consumidor Final
     'numero_documento' => '0',
     'razon_social' => 'CONSUMIDOR FINAL',
@@ -104,6 +107,8 @@ curl -X POST https://api.yo-facturo.com/api/v1/bill/receipts/invoice/ \
   -H "X-API-Key: TU_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
+    "punto_venta": 1,
+    "concepto": 1,
     "tipo_documento": 99,
     "numero_documento": "0",
     "razon_social": "CONSUMIDOR FINAL",
@@ -113,6 +118,8 @@ curl -X POST https://api.yo-facturo.com/api/v1/bill/receipts/invoice/ \
 ```
 </details>
 
+**Qué manda cada campo.** `punto_venta` es obligatorio (el punto de venta habilitado en ARCA). `concepto` también lo exige la API (1 = productos, 2 = servicios, 3 = ambos): los SDKs mandan `1` si no lo pasás. Los `precio_unitario` son **precios finales, IVA incluido** (igual que el POS y el catálogo): el backend calcula neto, IVA y total, así que no mandes `importe_*` ni `iva_items`. Si tus precios son netos de IVA, mandá `precios_con_iva: false`. La letra (A/B/C) sale de la condición de IVA del receptor, que podés indicar con `condicion_iva_receptor_id` (1 RI, 4 Exento, 5 Consumidor Final, 6 Monotributo) o con `receptor_condicion_iva` / `condicion_iva` (el nombre): los tres campos valen lo mismo. Con un CUIT solo, la API consulta el padrón de ARCA; si no puede determinar la condición, emite Factura B a Consumidor Final. Una línea puede llevar `bonificacion` (descuento) y `iva_id` (5 = 21%, 4 = 10,5%, 3 = 0%).
+
 Con `autorizar: true` el comprobante se crea y la autorización ante AFIP se dispara sola: la respuesta vuelve enseguida con `authorization_pending: true` y el comprobante en estado `pendiente`. Para obtener el **CAE**, volvé a leer el comprobante (`invoices.get(id)`) hasta que el campo `cae` venga cargado. Si preferís revisar el comprobante antes de emitirlo, creálo con `autorizar: false` (queda en borrador) y llamá después a `invoices.authorize(id)`, que es síncrono y devuelve el CAE (o el motivo del rechazo) en el momento.
 
 ### Listar comprobantes
@@ -121,14 +128,26 @@ Con `autorizar: true` el comprobante se crea y la autorización ante AFIP se dis
 comprobantes = client.invoices.list(page=1, per_page=20, estado="aprobado")
 ```
 
+### Emitir una factura a un cliente registrado
+
+```python
+factura = client.invoices.create_for_customer(
+    customer_id,  # el "id" del cliente en YoFacturo: documento y condición de IVA salen de su ficha
+    punto_venta=1,
+    items=[{"descripcion": "Servicio de consultoría", "cantidad": 1, "precio_unitario": 15000}],
+)
+```
+
 ### Emitir una nota de crédito
 
 ```python
 nota = client.invoices.credit_note(
     comprobante_id,  # el "id" del comprobante original, que debe estar aprobado
-    items=[{"descripcion": "Devolución parcial", "cantidad": 1, "precio_unitario": 5000}],
+    lineas=[{"linea": 0, "cantidad": 1}],  # 1 unidad del primer renglón del original
     motivo="Devolución parcial de mercadería",
 )
+
+Cuánto acreditar se indica con **uno** de estos campos: `lineas=[{"linea": 0, "cantidad": 1}]` (devolución por renglón: `linea` es el índice desde 0 del renglón del original), `importe_a_acreditar=605` (un monto) o `porcentaje_aplicar=50` (un porcentaje). Sin ninguno, la nota anula el 100% del comprobante. `items` ya no se usa para devoluciones parciales: la API arma las líneas de la nota desde el original y rechaza (400) un `items` que no coincida con su total.
 ```
 
 Los ejemplos completos y ejecutables (Python, Node.js y PHP) están en [`examples/`](examples/): [`emitir-factura`](examples/emitir-factura.py), [`listar-comprobantes`](examples/listar-comprobantes.py) y [`nota-de-credito`](examples/nota-de-credito.py).

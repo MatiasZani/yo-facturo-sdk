@@ -35,16 +35,73 @@ test("create() sends the Idempotency-Key header when given", async () => {
   assert.equal(calls[0].headers["Idempotency-Key"], "factura-2026-05-21-001");
 });
 
-test("createForCustomer() sets customer_id", async () => {
-  const { client, calls } = makeClient([[200, {}, { success: true, data: { id: "abc" } }]]);
+test("createForCustomer() posts to the customer endpoint with the customer (F5)", async () => {
+  const { client, calls } = makeClient([[200, {}, { success: true, data: { factura_id: "abc" } }]]);
   await client.invoices.createForCustomer("cust_123", {
+    punto_venta: 1,
     items: [{ descripcion: "Servicio", cantidad: 1, precio_unitario: 1000 }],
     autorizar: false,
   });
   const call = calls[0];
-  assert.ok(call.url.endsWith("/bill/receipts/invoice/"));
+  assert.ok(call.url.endsWith("/bill/receipts/invoice/customer/"));
   assert.equal((call.body as any).customer_id, "cust_123");
+  assert.equal((call.body as any).punto_venta, 1);
   assert.equal((call.body as any).autorizar, false);
+});
+
+test("createForCustomer() sends the idempotency key as a header", async () => {
+  const { client, calls } = makeClient([[200, {}, { success: true, data: {} }]]);
+  await client.invoices.createForCustomer("cust_123", { punto_venta: 1, items: [] }, "k-1");
+  assert.equal(calls[0].headers["Idempotency-Key"], "k-1");
+  assert.equal("idempotency_key" in (calls[0].body as object), false);
+});
+
+test("create() defaults concepto to 1 (productos) but keeps an explicit one (F12)", async () => {
+  const { client, calls } = makeClient([
+    [200, {}, { success: true, data: {} }],
+    [200, {}, { success: true, data: {} }],
+  ]);
+  await client.invoices.create({ punto_venta: 1, tipo_documento: 99, numero_documento: "0", items: [] });
+  assert.equal((calls[0].body as any).concepto, 1);
+  await client.invoices.create({ punto_venta: 1, concepto: 2, tipo_documento: 99, numero_documento: "0", items: [] });
+  assert.equal((calls[1].body as any).concepto, 2);
+});
+
+test("create() passes precios_con_iva: false through", async () => {
+  const { client, calls } = makeClient([[200, {}, { success: true, data: {} }]]);
+  await client.invoices.create({ punto_venta: 1, tipo_documento: 99, numero_documento: "0", items: [], precios_con_iva: false });
+  assert.equal((calls[0].body as any).precios_con_iva, false);
+});
+
+test("creditNote() by lines sends lineas and no items (F9)", async () => {
+  const { client, calls } = makeClient([[200, {}, { success: true, data: { id: "nc_1" } }]]);
+  await client.invoices.creditNote("orig", { lineas: [{ linea: 1, cantidad: 1 }], motivo: "Devolución" });
+  assert.deepEqual(calls[0].body, {
+    comprobante_asociado_id: "orig",
+    lineas: [{ linea: 1, cantidad: 1 }],
+    motivo: "Devolución",
+  });
+});
+
+test("creditNote() by amount, by percentage and total", async () => {
+  const { client, calls } = makeClient([
+    [200, {}, { success: true, data: {} }],
+    [200, {}, { success: true, data: {} }],
+    [200, {}, { success: true, data: {} }],
+  ]);
+  await client.invoices.creditNote("orig", { importe_a_acreditar: 605 });
+  assert.deepEqual(calls[0].body, { comprobante_asociado_id: "orig", importe_a_acreditar: 605 });
+  await client.invoices.creditNote("orig", { porcentaje_aplicar: 50 });
+  assert.deepEqual(calls[1].body, { comprobante_asociado_id: "orig", porcentaje_aplicar: 50 });
+  await client.invoices.creditNote("orig");
+  assert.deepEqual(calls[2].body, { comprobante_asociado_id: "orig" });
+});
+
+test("creditNote(id, items, fields) keeps working", async () => {
+  const { client, calls } = makeClient([[200, {}, { success: true, data: {} }]]);
+  await client.invoices.creditNote("orig", [{ descripcion: "x", cantidad: 1, precio_unitario: 1 }], { importe_total: 1 });
+  assert.equal((calls[0].body as any).items.length, 1);
+  assert.equal((calls[0].body as any).importe_total, 1);
 });
 
 test("creditNote() requires comprobanteAsociadoId", async () => {

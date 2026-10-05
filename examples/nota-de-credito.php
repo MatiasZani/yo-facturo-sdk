@@ -19,10 +19,12 @@ if (!$comprobanteId) {
 
 $client = new Client((string) getenv('YOFACTURO_API_KEY'));
 
+// Devolución por renglón: 'linea' es el índice (desde 0) del renglón del comprobante original.
+// Alternativas: 'importe_a_acreditar' => 5000.00 o 'porcentaje_aplicar' => 50; sin ninguna anula el 100%.
 $nota = $client->invoices->creditNote(
     $comprobanteId,
-    [['descripcion' => 'Devolución parcial de mercadería', 'cantidad' => 1, 'precio_unitario' => 5000.00]],
-    ['motivo' => 'Devolución parcial de mercadería', 'autorizar' => true]
+    null,
+    ['lineas' => [['linea' => 0, 'cantidad' => 1]], 'motivo' => 'Devolución parcial de mercadería', 'autorizar' => true]
 );
 
 echo "Nota de crédito creada: {$nota['data']['id']} (estado: {$nota['data']['estado']})\n";

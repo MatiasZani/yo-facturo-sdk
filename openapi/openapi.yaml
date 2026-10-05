@@ -726,9 +726,11 @@ paths:
       - Facturación
       summary: Emitir nota de crédito
       operationId: create_credit_note
-      description: 'Anula total o parcialmente un comprobante existente. Con un token `yf_test_*` (sandbox)
-        este endpoint no llama a AFIP: persiste un comprobante simulado (`simulated: true`, `livemode:
-        false`, un CAE sintético) en la base sandbox aislada del tenant. Requiere scope `invoices:write`.'
+      description: 'Anula total o parcialmente un comprobante aprobado: por renglón (`lineas`), por monto
+        (`importe_a_acreditar`), por porcentaje (`porcentaje_aplicar`) o, sin ninguno, el 100%. Con un
+        token `yf_test_*` (sandbox) este endpoint no llama a AFIP: persiste un comprobante simulado (`simulated:
+        true`, `livemode: false`, un CAE sintético) en la base sandbox aislada del tenant. Requiere scope
+        `invoices:write`.'
       security:
       - ApiKeyHeader: []
       - ApiKeyBearer: []
@@ -739,7 +741,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/NoteCreateRequest'
+              $ref: '#/components/schemas/CreditNoteCreateRequest'
       responses:
         '200':
           description: Nota de crédito creada.
@@ -826,7 +828,8 @@ paths:
         (sandbox) este endpoint no llama a AFIP: persiste un comprobante simulado (`simulated: true`,
         `livemode: false`, un CAE sintético) en la base sandbox aislada del tenant. Soporta reintentos
         seguros vía `Idempotency-Key`; si no se envía ese header, igual se deduplica por huella del payload
-        durante 5 minutos para no emitir dos comprobantes fiscales por un reintento de red. Requiere scope
+        durante 5 minutos para no emitir dos comprobantes fiscales por un reintento de red. Los precios
+        de `items` son finales (IVA incluido); `precios_con_iva: false` los toma netos. Requiere scope
         `invoices:write`.'
       security:
       - ApiKeyHeader: []
@@ -8424,11 +8427,19 @@ components:
       additionalProperties: true
     InvoiceCreateRequest:
       type: object
-      description: 'Datos del comprobante a emitir. El tipo (Factura A/B/C) se infiere de la condición
-        de IVA del emisor si `tipo_comprobante` se omite. En un token `yf_test_*` este endpoint NUNCA
-        llama a AFIP: guarda un comprobante simulado con un CAE sintético (`simulated: true`, `livemode:
-        false`) en la base sandbox del tenant.'
+      description: 'Datos del comprobante a emitir. Los `precio_unitario` de `items` son precios FINALES
+        (IVA incluido, igual que el POS y el catálogo): el backend calcula neto, IVA y total, así que
+        no hace falta mandar `importe_*` ni `iva_items`. Si tus precios son netos de IVA, mandá `precios_con_iva:
+        false`. El tipo (Factura A/B/C) se infiere de la condición de IVA del emisor y del receptor si
+        `tipo_comprobante` se omite; la condición del receptor se indica con `condicion_iva_receptor_id`,
+        `receptor_condicion_iva` o `condicion_iva` (los tres valen lo mismo y alimentan tanto la letra
+        como el `CondicionIVAReceptorId` que se informa a ARCA). Con un CUIT solo (sin condición), la
+        API consulta el padrón de ARCA; si no puede determinarla emite Factura B a Consumidor Final. En
+        un token `yf_test_*` este endpoint NUNCA llama a AFIP: guarda un comprobante simulado con un CAE
+        sintético (`simulated: true`, `livemode: false`) en la base sandbox del tenant.'
       required:
+      - punto_venta
+      - concepto
       - tipo_documento
       - numero_documento
       - items
@@ -8442,6 +8453,16 @@ components:
           type: integer
           minimum: 1
           example: 1
+          description: Punto de venta habilitado en ARCA para facturación electrónica. Obligatorio.
+        concepto:
+          type: integer
+          enum:
+          - 1
+          - 2
+          - 3
+          example: 1
+          description: 'Concepto ARCA: 1 = productos, 2 = servicios, 3 = productos y servicios. Obligatorio
+            (los SDK mandan 1 si no lo indicás).'
         tipo_documento:
           type: integer
           description: Código AFIP del tipo de documento del receptor (80=CUIT, 96=DNI, 99=Consumidor
@@ -8453,9 +8474,22 @@ components:
         razon_social:
           type: string
           example: Consumidor Final
-        domicilio:
+        condicion_iva_receptor_id:
+          type: integer
+          example: 5
+          description: 'Condición frente al IVA del receptor. Código ARCA: 1 = Responsable Inscripto,
+            4 = Exento, 5 = Consumidor Final, 6 = Monotributo (otros códigos ARCA también se aceptan).
+            Equivale a `receptor_condicion_iva` y `condicion_iva`.'
+        receptor_condicion_iva:
           type: string
-        condicion_iva_receptor:
+          example: consumidor_final
+          description: Condición del receptor por nombre (`responsable_inscripto`, `monotributo`, `exento`,
+            `consumidor_final`). Equivale a `condicion_iva_receptor_id`.
+        condicion_iva:
+          type: string
+          example: consumidor_final
+          description: Alias de `receptor_condicion_iva`. Equivale a `condicion_iva_receptor_id`.
+        domicilio:
           type: string
         items:
           type: array
@@ -8471,12 +8505,21 @@ components:
               precio_unitario:
                 type: number
                 minimum: 0
-              alicuota_iva:
-                type: string
-                description: Código AFIP de alícuota (5=21%, 4=10.5%, 3=0%, ...).
+                description: 'Precio unitario FINAL (IVA incluido) salvo `precios_con_iva: false`.'
+              iva_id:
+                type: integer
+                default: 5
+                description: 'Alícuota de IVA de la línea, código ARCA: 5 = 21%, 4 = 10,5%, 6 = 27%, 3
+                  = 0%, 2 = exento. Si se omite, 21%.'
+              bonificacion:
+                type: number
+                minimum: 0
+                description: Descuento de la línea, en importe, sobre cantidad x precio.
         importe_total:
           type: number
           minimum: 0
+          description: 'Opcional: el backend lo calcula. Si lo mandás, tiene que coincidir con el total
+            de los `items`.'
         customer_id:
           type: string
           description: Id del cliente en YoFacturo (alternativa a mandar los datos fiscales sueltos).
@@ -8496,6 +8539,10 @@ components:
           default: false
           description: Si true, dispara la autorización (obtención del CAE) en background inmediatamente
             después de crear el borrador.
+        precios_con_iva:
+          type: boolean
+          description: 'true: los `precio_unitario` son finales, IVA incluido (default con API token).
+            false: son netos de IVA y el backend suma el IVA (el comportamiento anterior al 5-oct-2026).'
       additionalProperties: true
     NoteCreateRequest:
       type: object
@@ -8809,3 +8856,67 @@ components:
           type: boolean
           enum:
           - false
+    CreditNoteCreateRequest:
+      type: object
+      description: 'Nota de crédito sobre un comprobante aprobado. Cuánto acreditar se indica con UNO
+        de `lineas` (devolución por renglón), `importe_a_acreditar` (un monto) o `porcentaje_aplicar`
+        (un porcentaje); sin ninguno, la nota anula el 100% del comprobante. La API arma las líneas de
+        la nota desde el original: `items` ya no se usa para devoluciones parciales y un `items` que no
+        coincida con el total de la nota se rechaza con 400.'
+      required:
+      - comprobante_asociado_id
+      properties:
+        comprobante_asociado_id:
+          type: string
+          description: Id del comprobante (factura) aprobado que esta nota acredita.
+        motivo:
+          type: string
+          example: Devolución parcial de mercadería
+        lineas:
+          type: array
+          minItems: 1
+          description: Devolución por renglón.
+          items:
+            type: object
+            required:
+            - linea
+            - cantidad
+            properties:
+              linea:
+                type: integer
+                minimum: 0
+                description: Índice (desde 0) del renglón del comprobante original.
+              cantidad:
+                type: number
+                exclusiveMinimum: 0
+                description: Unidades que se devuelven (no puede superar la cantidad original).
+        importe_a_acreditar:
+          type: number
+          exclusiveMinimum: 0
+          description: Monto a acreditar, IVA incluido (no puede superar el total del comprobante).
+        porcentaje_aplicar:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 100
+          description: Porcentaje del comprobante a acreditar.
+        items:
+          type: array
+          deprecated: true
+          description: 'Ya no se usa para devoluciones parciales: usá `lineas`, `importe_a_acreditar`
+            o `porcentaje_aplicar`.'
+          items:
+            type: object
+            additionalProperties: true
+        importe_total:
+          type: number
+          minimum: 0
+        ambiente:
+          type: string
+          enum:
+          - production
+          - testing
+          default: production
+        autorizar:
+          type: boolean
+          default: false
+      additionalProperties: true

@@ -25,6 +25,7 @@ client = YoFacturo(api_key="yf_live_...")  # Configuración → Integraciones �
 
 # Emitir una factura (autorizar=True dispara el CAE en segundo plano)
 factura = client.invoices.create(
+    punto_venta=1,
     tipo_documento=99,
     numero_documento="0",
     razon_social="CONSUMIDOR FINAL",
@@ -39,7 +40,7 @@ comprobantes = client.invoices.list(page=1, per_page=20, estado="aprobado")
 # Emitir una nota de crédito asociada
 nota = client.invoices.credit_note(
     factura["data"]["id"],
-    items=[{"descripcion": "Devolución parcial", "cantidad": 1, "precio_unitario": 5000}],
+    lineas=[{"linea": 0, "cantidad": 1}],  # 1 unidad del primer renglón (o importe_a_acreditar= / porcentaje_aplicar=)
     motivo="Devolución parcial de mercadería",
 )
 ```

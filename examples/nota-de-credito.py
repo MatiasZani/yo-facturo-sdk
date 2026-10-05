@@ -15,9 +15,9 @@ comprobante_id = sys.argv[1] if len(sys.argv) > 1 else os.environ["COMPROBANTE_I
 
 nota = client.invoices.credit_note(
     comprobante_id,
-    items=[
-        {"descripcion": "Devolución parcial de mercadería", "cantidad": 1, "precio_unitario": 5000.00},
-    ],
+    # Devolución por renglón: "linea" es el índice (desde 0) del renglón del comprobante original.
+    # Alternativas: importe_a_acreditar=5000.00 o porcentaje_aplicar=50; sin ninguna anula el 100%.
+    lineas=[{"linea": 0, "cantidad": 1}],
     motivo="Devolución parcial de mercadería",
     autorizar=True,
 )

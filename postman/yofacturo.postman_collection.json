@@ -2526,7 +2526,7 @@
             "description": "Anula total o parcialmente un comprobante existente. Con un token `yf_test_*` (sandbox) este endpoint no llama a AFIP: persiste un comprobante simulado (`simulated: true`, `livemode: false`, un CAE sintético) en la base sandbox aislada del tenant. Requiere scope `invoices:write`.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"comprobante_asociado_id\": \"9d9fc2b8-3947-41e8-9549-6996cc4f2b43\",\n  \"items\": [\n    {\n      \"descripcion\": \"Devolución parcial de mercadería\",\n      \"cantidad\": 1,\n      \"precio_unitario\": 100000.0\n    }\n  ],\n  \"motivo\": \"Devolución parcial de mercadería\",\n  \"importe_total\": 121000.0\n}",
+              "raw": "{\n  \"comprobante_asociado_id\": \"9d9fc2b8-3947-41e8-9549-6996cc4f2b43\",\n  \"lineas\": [\n    {\n      \"linea\": 0,\n      \"cantidad\": 1\n    }\n  ],\n  \"motivo\": \"Devolución parcial de mercadería\",\n  \"autorizar\": false\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -2594,7 +2594,7 @@
             "description": "Crea (y opcionalmente autoriza) una factura electrónica AFIP. Con un token `yf_test_*` (sandbox) este endpoint no llama a AFIP: persiste un comprobante simulado (`simulated: true`, `livemode: false`, un CAE sintético) en la base sandbox aislada del tenant. Soporta reintentos seguros vía `Idempotency-Key`; si no se envía ese header, igual se deduplica por huella del payload durante 5 minutos para no emitir dos comprobantes fiscales por un reintento de red. Requiere scope `invoices:write`.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"tipo_comprobante\": 11,\n  \"punto_venta\": 1,\n  \"tipo_documento\": 99,\n  \"numero_documento\": \"0\",\n  \"razon_social\": \"CONSUMIDOR FINAL\",\n  \"condicion_iva_receptor\": \"Consumidor Final\",\n  \"items\": [\n    {\n      \"descripcion\": \"Servicio de consultoría\",\n      \"cantidad\": 1,\n      \"precio_unitario\": 15000.0\n    }\n  ],\n  \"importe_total\": 15000.0,\n  \"autorizar\": true\n}",
+              "raw": "{\n  \"punto_venta\": 1,\n  \"concepto\": 1,\n  \"tipo_documento\": 99,\n  \"numero_documento\": \"0\",\n  \"razon_social\": \"CONSUMIDOR FINAL\",\n  \"condicion_iva_receptor_id\": 5,\n  \"items\": [\n    {\n      \"descripcion\": \"Servicio de consultoría\",\n      \"cantidad\": 1,\n      \"precio_unitario\": 15000.0,\n      \"iva_id\": 5\n    }\n  ],\n  \"autorizar\": true\n}",
               "options": {
                 "raw": {
                   "language": "json"

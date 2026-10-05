@@ -15,11 +15,13 @@ async function main() {
 
   const client = new YoFacturo(process.env.YOFACTURO_API_KEY);
 
-  const nota = await client.invoices.creditNote(
-    comprobanteId,
-    [{ descripcion: "Devolución parcial de mercadería", cantidad: 1, precio_unitario: 5000.0 }],
-    { motivo: "Devolución parcial de mercadería", autorizar: true }
-  );
+  // Devolución por renglón: "linea" es el índice (desde 0) del renglón del comprobante original.
+  // Alternativas: importe_a_acreditar: 5000 o porcentaje_aplicar: 50; sin ninguna anula el 100%.
+  const nota = await client.invoices.creditNote(comprobanteId, {
+    lineas: [{ linea: 0, cantidad: 1 }],
+    motivo: "Devolución parcial de mercadería",
+    autorizar: true,
+  });
 
   console.log(`Nota de crédito creada: ${nota.data.id} (estado: ${nota.data.estado})`);
 }

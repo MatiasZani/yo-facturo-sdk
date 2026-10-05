@@ -23,6 +23,7 @@ $client = new Client('yf_live_...'); // Configuración → Integraciones → API
 
 // Emitir una factura (autorizar: true dispara el CAE en segundo plano)
 $factura = $client->invoices->create([
+    'punto_venta' => 1,
     'tipo_documento' => 99,
     'numero_documento' => '0',
     'razon_social' => 'CONSUMIDOR FINAL',
@@ -39,8 +40,8 @@ $comprobantes = $client->invoices->list(['page' => 1, 'per_page' => 20, 'estado'
 // Emitir una nota de crédito asociada
 $nota = $client->invoices->creditNote(
     $factura['data']['id'],
-    [['descripcion' => 'Devolución parcial', 'cantidad' => 1, 'precio_unitario' => 5000]],
-    ['motivo' => 'Devolución parcial de mercadería']
+    null,
+    ['lineas' => [['linea' => 0, 'cantidad' => 1]], 'motivo' => 'Devolución parcial de mercadería'] // o importe_a_acreditar / porcentaje_aplicar
 );
 ```
 
