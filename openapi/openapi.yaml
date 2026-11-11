@@ -23,10 +23,14 @@ info:
     \ trae `Idempotency-Replayed: true`); la misma clave con un body distinto devuelve 422.\n\n### Rate\
     \ limiting\nTodos los tokens de un mismo tenant comparten una ventana deslizante (10/s · 100/min ·\
     \ 3000/h · 20000/día). Al superarla, la respuesta es 429 con headers `X-RateLimit-*` y `Retry-After`.\n\
-    \n### Modelo de respuesta\nToda respuesta exitosa tiene la forma `{\"success\": true, \"data\": ...,\
-    \ \"message\"?: ..., \"_links\"?: {...}}`. Todo error tiene la forma `{\"success\": false, \"error\"\
-    : \"...\", \"code\": \"...\"}` — `code` es estable y apto para switch/case, `error` es para mostrar.\n\
-    \n### Confianza y disponibilidad\nSeguridad: https://yo-facturo.com/seguridad/ · Confiabilidad: https://yo-facturo.com/confiabilidad/\
+    \n### Cuentas API partner\nLas cuentas con contrato partner usan un perfil de límites propio (100/s\
+    \ · 3.000/min · 120.000/h · 2.000.000/día, compartido por todos sus tokens) y los endpoints `/partner/*`\
+    \ para registrar el CUIT de sus usuarios finales; facturan en su nombre con `taxpayer_id` en `POST\
+    \ /bill/receipts/invoice/`. Ver el tag *Cuentas API partner*.\n\n### Modelo de respuesta\nToda respuesta\
+    \ exitosa tiene la forma `{\"success\": true, \"data\": ..., \"message\"?: ..., \"_links\"?: {...}}`.\
+    \ Todo error tiene la forma `{\"success\": false, \"error\": \"...\", \"code\": \"...\"}` — `code`\
+    \ es estable y apto para switch/case, `error` es para mostrar.\n\n### Confianza y disponibilidad\n\
+    Seguridad: https://yo-facturo.com/seguridad/ · Confiabilidad: https://yo-facturo.com/confiabilidad/\
     \ · DPA: https://yo-facturo.com/legal/dpa/ · SLA: https://yo-facturo.com/legal/sla/ · Estado del servicio:\
     \ https://status.yo-facturo.com\n\n## Cobertura de este spec\n\nDocumentado con detalle completo (request/response\
     \ tipados): **Productos**,\n**Clientes**, **Ventas**, **Facturación** (emisión/nota de crédito/nota\
@@ -49,7 +53,13 @@ info:
     \ `/bill/receipts/{id}/send-email/`,\n  PUT/PATCH de comprobante.\n- Import/export (Excel/CSV) por\
     \ entidad: `/{entity}/import/`,\n  `/{entity}/export/`, `/{entity}/import/template/` — autenticados\
     \ solo por\n  JWT en la mayoría de entidades.\n- SCIM 2.0 (`scim:provision`) y MCP (`POST /api/v1/mcp`)\
-    \ — protocolos propios,\n  no HTTP REST convencional; se documentarán en specs separadas."
+    \ — protocolos propios,\n  no HTTP REST convencional; se documentarán en specs separadas.\n\n## Facturación\
+    \ Paraguay (SIFEN)\n\nLos contribuyentes de Paraguay facturan ante la DNIT/SET (SIFEN). La emisión\
+    \ usa la misma puerta que AFIP (`POST /sales/` con `generate_invoice: true` o `request_fiscal_document:\
+    \ true`) y es asíncrona: el `201` no trae CDC; leé `fiscal` en `GET /sales/{id}/`, `GET /bill/sifen/documents/{cdc}/`\
+    \ o suscribite a los webhooks `invoice.authorized` / `invoice.rejected` / `invoice.cancelled` (`system:\
+    \ \"sifen\"`). Las rutas `/bill/receipts/*` (AFIP) devuelven 409 `use_sifen_routes` en un tenant SIFEN.\
+    \ Con `yf_test_*` todo se lee, pero nada se transmite a SIFEN (409). Guía completa: https://yo-facturo.com/dev/paraguay-sifen/"
   contact:
     name: YoFacturo API Support
     email: api@yo-facturo.com
@@ -68,6 +78,12 @@ tags:
 - name: Facturación
   description: Comprobantes electrónicos AFIP (facturas, notas de crédito/débito), facturas de compra
     y remitos.
+- name: Facturación Paraguay (SIFEN)
+  description: 'Documentos electrónicos (DE) de Paraguay ante la DNIT/SET (SIFEN): factura electrónica
+    (FE), nota de crédito (NCE) y nota de débito (NDE), KuDE, cancelación e inutilización, eventos del
+    receptor, onboarding (certificado, CSC, cajas) y webhooks. La emisión sale de `POST /sales/` (o `POST
+    /sales/generate_invoice/{sale_id}/`): estas rutas leen, consultan y operan los documentos ya emitidos.
+    Guía: https://yo-facturo.com/dev/paraguay-sifen/'
 - name: Compras
   description: Proveedores, gastos e insumos.
 - name: Clientes
@@ -80,6 +96,13 @@ tags:
   description: Suscripción a eventos salientes (HTTP) y su historial de entregas.
 - name: Sandbox
   description: Gestión de la base de datos de pruebas aislada de un token yf_test_*.
+- name: Cuentas API partner
+  description: 'Cuentas API partner: registrá el CUIT de tus usuarios finales y facturá en su nombre con
+    `taxpayer_id`. Solo cuentas con contrato partner; scopes `taxpayers:read|write` (partner-only). Perfil
+    de límites partner: 100/s, 3.000/min, 120.000/h, 2.000.000/día por cuenta; emisión 600 facturas y
+    300 notas cada 5 minutos. Notas de crédito y débito sobre comprobantes de un CUIT dado de baja: se
+    permiten mientras ese CUIT no lo haya registrado otra cuenta; si lo registró otra responde 409 `API_PARTNER_NOTE_ISSUER_CLAIMED_ELSEWHERE`,
+    y si ARCA ya no lista la delegación la nota queda pendiente con `API_PARTNER_NOTE_ISSUER_DELEGATION_MISSING`.'
 security:
 - ApiKeyHeader: []
 - ApiKeyBearer: []
@@ -632,7 +655,9 @@ paths:
       operationId: authorize_comprobante
       description: 'Envía a AFIP un comprobante creado en borrador y obtiene su CAE. Con un token `yf_test_*`
         (sandbox) este endpoint no llama a AFIP: persiste un comprobante simulado (`simulated: true`,
-        `livemode: false`, un CAE sintético) en la base sandbox aislada del tenant. Requiere scope `invoices:write`.'
+        `livemode: false`, un CAE sintético) en la base sandbox aislada del tenant. Requiere scope `invoices:write`.
+        En un tenant que factura con SIFEN (Paraguay) responde 409 con `error_code: use_sifen_routes`:
+        emití con `POST /sales/` y las notas con `POST /sales/{sale_id}/credit_note/`.'
       security:
       - ApiKeyHeader: []
       - ApiKeyBearer: []
@@ -719,7 +744,8 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
       x-required-scope:
       - invoices:write
-      description: Requiere scope `invoices:write`.
+      description: 'Requiere scope `invoices:write`. En un tenant que factura con SIFEN (Paraguay) responde
+        409 con `error_code: use_sifen_routes`: emití con `POST /sales/` y las notas con `POST /sales/{sale_id}/credit_note/`.'
   /bill/receipts/credit-note/:
     post:
       tags:
@@ -730,7 +756,11 @@ paths:
         (`importe_a_acreditar`), por porcentaje (`porcentaje_aplicar`) o, sin ninguno, el 100%. Con un
         token `yf_test_*` (sandbox) este endpoint no llama a AFIP: persiste un comprobante simulado (`simulated:
         true`, `livemode: false`, un CAE sintético) en la base sandbox aislada del tenant. Requiere scope
-        `invoices:write`.'
+        `invoices:write`. En un tenant que factura con SIFEN (Paraguay) responde 409 con `error_code:
+        use_sifen_routes`: emití con `POST /sales/` y las notas con `POST /sales/{sale_id}/credit_note/`.
+        Notas de crédito y débito sobre comprobantes de un CUIT dado de baja: se permiten mientras ese
+        CUIT no lo haya registrado otra cuenta; si lo registró otra responde 409 `API_PARTNER_NOTE_ISSUER_CLAIMED_ELSEWHERE`,
+        y si ARCA ya no lista la delegación la nota queda pendiente con `API_PARTNER_NOTE_ISSUER_DELEGATION_MISSING`.'
       security:
       - ApiKeyHeader: []
       - ApiKeyBearer: []
@@ -767,6 +797,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '429':
           $ref: '#/components/responses/TooManyRequests'
       x-required-scope:
@@ -779,7 +811,12 @@ paths:
       operationId: create_debit_note
       description: 'Ajusta al alza un comprobante existente. Con un token `yf_test_*` (sandbox) este endpoint
         no llama a AFIP: persiste un comprobante simulado (`simulated: true`, `livemode: false`, un CAE
-        sintético) en la base sandbox aislada del tenant. Requiere scope `invoices:write`.'
+        sintético) en la base sandbox aislada del tenant. Requiere scope `invoices:write`. En un tenant
+        que factura con SIFEN (Paraguay) responde 409 con `error_code: use_sifen_routes`: emití con `POST
+        /sales/` y las notas con `POST /sales/{sale_id}/credit_note/`. Notas de crédito y débito sobre
+        comprobantes de un CUIT dado de baja: se permiten mientras ese CUIT no lo haya registrado otra
+        cuenta; si lo registró otra responde 409 `API_PARTNER_NOTE_ISSUER_CLAIMED_ELSEWHERE`, y si ARCA
+        ya no lista la delegación la nota queda pendiente con `API_PARTNER_NOTE_ISSUER_DELEGATION_MISSING`.'
       security:
       - ApiKeyHeader: []
       - ApiKeyBearer: []
@@ -830,7 +867,8 @@ paths:
         seguros vía `Idempotency-Key`; si no se envía ese header, igual se deduplica por huella del payload
         durante 5 minutos para no emitir dos comprobantes fiscales por un reintento de red. Los precios
         de `items` son finales (IVA incluido); `precios_con_iva: false` los toma netos. Requiere scope
-        `invoices:write`.'
+        `invoices:write`. En un tenant que factura con SIFEN (Paraguay) responde 409 con `error_code:
+        use_sifen_routes`: emití con `POST /sales/` y las notas con `POST /sales/{sale_id}/credit_note/`.'
       security:
       - ApiKeyHeader: []
       - ApiKeyBearer: []
@@ -997,11 +1035,10 @@ paths:
       - invoices:read
       description: Requiere scope `invoices:read`.
   /bill/receipts/{comprobante_id}/:
-    get:
+    delete:
       tags:
-      - Facturación
-      summary: Obtener comprobante
-      operationId: get_comprobante
+      - Facturacion
+      summary: Eliminar un comprobante
       security:
       - ApiKeyHeader: []
       - ApiKeyBearer: []
@@ -1013,7 +1050,7 @@ paths:
           type: string
       responses:
         '200':
-          description: Comprobante.
+          description: Comprobante eliminado.
           content:
             application/json:
               schema:
@@ -1025,23 +1062,118 @@ paths:
                     - true
                     example: true
                   data:
-                    $ref: '#/components/schemas/Comprobante'
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      deleted:
+                        type: boolean
+                        enum:
+                        - true
                   message:
                     type: string
-                  _links:
-                    $ref: '#/components/schemas/Links'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - invoices:write
+      description: 'Requiere scope `invoices:write` (permiso `administration:invoices:delete`). Solo comprobantes
+        en borrador o rechazados. Los autorizados NO se pueden borrar: se anulan con una nota de credito.
+        Rate limit: 5 cada 5 minutos.'
+    get:
+      tags:
+      - Facturacion
+      summary: Obtener un comprobante por ID
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - name: comprobante_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: 'Comprobante encontrado (incluye iva_handling: si discrimina IVA segun el tipo).'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    allOf:
+                    - $ref: '#/components/schemas/Comprobante'
+                    - type: object
+                      properties:
+                        iva_handling:
+                          type: object
+                          properties:
+                            incluye_iva_discriminado:
+                              type: boolean
+                            tipo_comprobante_nombre:
+                              type: string
+                  message:
+                    type: string
         '404':
           $ref: '#/components/responses/NotFound'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '429':
           $ref: '#/components/responses/TooManyRequests'
       x-required-scope:
       - invoices:read
-      description: Requiere scope `invoices:read`.
+      description: Requiere scope `invoices:read` (permiso `administration:invoices:view`).
   /budgets/:
+    get:
+      tags:
+      - Ventas
+      summary: Entry point HATEOAS de presupuestos
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      responses:
+        '200':
+          description: 'Solo devuelve los links disponibles (data: null); el listado real es GET /budgets/list/.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    type: 'null'
+                  _links:
+                    $ref: '#/components/schemas/Links'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - budgets:read
+      description: Requiere scope `budgets:read`.
     post:
       tags:
       - Ventas
@@ -1077,7 +1209,12 @@ paths:
           $ref: '#/components/responses/InternalError'
       x-required-scope:
       - budgets:write
-      description: Requiere scope `budgets:write`.
+      description: 'Requiere scope `budgets:write`.
+
+
+        **Monedas.** Un presupuesto sigue la misma regla que una venta: con productos de `price_currency`
+        distinta de la moneda por defecto, enviá `currency` (422 `CURRENCY_REQUIRED` / `MIXED_CURRENCY_CART`);
+        el presupuesto guarda `currency` y `fx` (cotización oficial del día).'
   /budgets/list/:
     get:
       tags:
@@ -4503,6 +4640,44 @@ paths:
       x-required-scope:
       - payment_methods:write
       description: Requiere scope `payment_methods:write`.
+    get:
+      tags:
+      - Metodos de pago
+      summary: Entry point HATEOAS de metodos de pago
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    type: object
+                  message:
+                    type: string
+                  _links:
+                    $ref: '#/components/schemas/Links'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - payment_methods:read
+      description: 'Requiere permiso `sales:payment_methods:view`. Solo devuelve los links disponibles
+        (data: null); el listado real es GET /payment_methods/list/.'
   /payment_methods/list/:
     get:
       tags:
@@ -4917,6 +5092,21 @@ paths:
         schema:
           type: boolean
           default: false
+      - name: currency_aware
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - '1'
+          - 'true'
+          - 'yes'
+        description: '**Importante para integraciones.** Sin este parámetro el listado omite los productos
+          cuyo `price_currency` no es la moneda por defecto de la cuenta (para que un cliente viejo no
+          los lea como pesos). Mandá `currency_aware=1` para recibir TODOS los productos: cada uno trae
+          `price_currency` cuando está en otra moneda, y debés mostrar/enviar esa moneda al vender. Los
+          SDK oficiales lo envían por defecto. Lo mismo aplica a `GET /products/by-barcode/` (404 sin
+          el parámetro para un producto en moneda extranjera).'
       responses:
         '200':
           description: Listado paginado de productos.
@@ -6198,7 +6388,17 @@ paths:
       summary: Crear venta
       operationId: create_sale
       description: 'Soporta reintentos seguros vía el header `Idempotency-Key`. Con `generate_invoice:
-        true` la venta dispara la emisión del comprobante asociado. Requiere scope `sales:write`.'
+        true` la venta dispara la emisión del comprobante asociado. Requiere scope `sales:write`.
+
+
+        **Monedas (listados en moneda extranjera).** Una venta tiene una sola moneda. Si los productos
+        tienen `price_currency` distinta de la moneda por defecto, enviá `currency` con esa moneda: sin
+        ella responde 422 `CURRENCY_REQUIRED`; con monedas mezcladas, 422 `MIXED_CURRENCY_CART`; si la
+        cuenta factura por un sistema que no admite moneda extranjera, 422 `FOREIGN_CURRENCY_NOT_SUPPORTED`.
+        La respuesta trae `currency` y `fx` {rate, rate_date, source, monid, environment}; la factura
+        usa la cotización oficial ARCA del día (errores 422 `INVOICE_FX_RATE_*`; los importes de un cobro
+        en pesos: `SALE_TENDER_*`). Las ventas en la moneda por defecto no cambian: no traen `currency`
+        ni `fx`. Los errores incluyen `error_code` además del `code`.'
       security:
       - ApiKeyHeader: []
       - ApiKeyBearer: []
@@ -7471,6 +7671,60 @@ paths:
       x-required-scope:
       - webhooks:write
       description: Requiere scope `webhooks:write`.
+    put:
+      tags:
+      - Webhooks
+      summary: Editar un endpoint
+      operationId: update_webhook_endpoint
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - name: endpoint_id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookEndpointUpdate'
+      responses:
+        '200':
+          description: Endpoint actualizado (sin el secreto).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/WebhookEndpoint'
+                  message:
+                    type: string
+                  _links:
+                    $ref: '#/components/schemas/Links'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - webhooks:write
+      description: Requiere scope `webhooks:write`.
   /webhooks/events:
     get:
       tags:
@@ -7511,6 +7765,2891 @@ paths:
       x-required-scope:
       - webhooks:read
       description: Requiere scope `webhooks:read`.
+  /bill/receipts/{comprobante_id}/public-link/:
+    post:
+      tags:
+      - Facturacion
+      summary: Generar link publico (sin auth) del comprobante
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - name: comprobante_id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expires_in_seconds:
+                  type: integer
+                  minimum: 60
+                  description: Minimo 60s.
+      responses:
+        '200':
+          description: Links publicos generados.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      token:
+                        type: string
+                      pdf_url:
+                        type: string
+                      view_url:
+                        type: string
+                      expires_at:
+                        type: integer
+                        description: Unix timestamp; solo si se paso expires_in_seconds.
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          description: Public invoice links are not configured on the server (falta la signing secret).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      x-required-scope:
+      - invoices:read
+      description: Requiere scope `invoices:read` (permiso `bill:invoices:view`). Valida primero que el
+        comprobante existe y esta autorizado. Devuelve pdf_url/view_url/token listos para mandar por email/WhatsApp.
+  /bill/tax_info/afip-environment/:
+    post:
+      tags:
+      - Informacion fiscal
+      summary: Cambiar el entorno AFIP del tenant
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - environment
+              properties:
+                environment:
+                  type: string
+                  enum:
+                  - production
+                  - testing
+      responses:
+        '200':
+          description: Entorno actualizado.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      afip_environment:
+                        type: string
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - accounting:write
+      description: Requiere scope `accounting:write` (permiso `configuration:fiscal:edit`). Las cuentas
+        de testing (marcadas por el admin) estan bloqueadas y NO pueden pasar a produccion por este endpoint
+        self-service.
+  /bill/receipts/credit-note/preview/:
+    post:
+      tags:
+      - Facturación
+      summary: Vista previa de una nota de crédito
+      operationId: preview_credit_note
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - comprobante_asociado_id
+              properties:
+                comprobante_asociado_id:
+                  type: string
+                motivo:
+                  type: string
+                lineas:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                    - linea
+                    - cantidad
+                    properties:
+                      linea:
+                        type: integer
+                        minimum: 0
+                      cantidad:
+                        type: number
+                importe_a_acreditar:
+                  type: number
+                  exclusiveMinimum: 0
+              additionalProperties: true
+      responses:
+        '200':
+          description: Vista previa.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      nota:
+                        type: object
+                        additionalProperties: true
+                        description: La nota como comprobante (importe_total, importe_neto_gravado, importe_iva,
+                          items, comprobantes_asociados...).
+                      por_lineas:
+                        type: boolean
+                      por_importe:
+                        type: boolean
+                      editable:
+                        type: boolean
+                      disponible:
+                        description: Lo que todavía se puede acreditar del original.
+                      errores:
+                        type: array
+                        items:
+                          type: string
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - invoices:write
+      description: 'Calcula, sin persistir nada, la nota de crédito que se emitiría: el comprobante derivado
+        (tipo, líneas acreditadas con sus importes, neto/IVA/total, comprobante asociado), lo que todavía
+        se puede acreditar y los errores de validación. Mismo body que `POST /bill/receipts/credit-note/`
+        (`lineas` o `importe_a_acreditar`; sin ninguno, 100%). Requiere scope `invoices:write`. En un
+        tenant que factura con SIFEN (Paraguay) responde 409 con `error_code: use_sifen_routes`: emití
+        con `POST /sales/` y las notas con `POST /sales/{sale_id}/credit_note/`.'
+  /bill/sifen/documents/:
+    get:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Listar documentos SIFEN
+      operationId: list_sifen_documents
+      description: 'Documentos electrónicos del tenant, el más nuevo primero. Paginación por cursor: pasá
+        `next_cursor` como `cursor`. Requiere scope `invoices:read`.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - name: tipo_de
+        in: query
+        schema:
+          type: integer
+          enum:
+          - 1
+          - 4
+          - 5
+          - 6
+          - 7
+      - name: status
+        in: query
+        description: Uno o varios estados separados por coma.
+        schema:
+          type: string
+          example: approved,approved_obs
+      - name: date_from
+        in: query
+        description: ISO 8601 (fecha o fecha-hora).
+        schema:
+          type: string
+      - name: date_to
+        in: query
+        schema:
+          type: string
+      - name: sale_id
+        in: query
+        schema:
+          type: string
+      - name: cdc
+        in: query
+        schema:
+          type: string
+      - name: caja
+        in: query
+        description: '`<establecimiento>-<punto de expedición>`, p. ej. `001-002`.'
+        schema:
+          type: string
+          example: 001-002
+      - name: est
+        in: query
+        schema:
+          type: string
+      - name: punExp
+        in: query
+        schema:
+          type: string
+      - name: limit
+        in: query
+        description: 1 a 200 (default 50).
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+      - name: cursor
+        in: query
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Página de documentos.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenDocumentList'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - invoices:read
+    post:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Emitir una factura electrónica sin venta
+      operationId: create_sifen_document
+      description: 'Emite una FE (iTiDE 1) SIN venta: misma numeración atómica, firma, persistencia y
+        transmisión en segundo plano que la factura de una venta. El backend calcula base, IVA y total
+        desde los importes brutos de cada renglón. La caja es `sales_point_id` o `establecimiento` + `punto_expedicion`
+        (400 `caja_not_configured` si el par no está configurado; sin ninguno rige el default del contribuyente).
+        Soporta `Idempotency-Key`; `client_reference` devuelve el mismo documento sin consumir otro número
+        (409 `issue_in_progress` si el primero sigue emitiéndose). Es asíncrona: la respuesta trae el
+        CDC en estado `signed`; seguila con `GET /bill/sifen/documents/{cdc}/`. Permiso del dueño del
+        token: `administration:invoices:create`. 30 por minuto. Un token `yf_test_*` recibe 409. Requiere
+        scope `invoices:write`.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SifenCreateDocumentRequest'
+      responses:
+        '201':
+          description: Documento numerado y firmado (la aprobación de SIFEN es asíncrona).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenStandaloneDocument'
+                  message:
+                    type: string
+        '400':
+          description: 'Cuerpo no emitible (`error_code`: `type_not_issuable`, `invalid_tipo_de`, `invalid_items`,
+            `invalid_vat_rate`, `invalid_receptor`, `invalid_caja`, `caja_not_configured`). No se reservó
+            ningún número.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SifenError'
+        '409':
+          description: '`issue_in_progress`, datos fiscales o certificado faltantes, o token de prueba
+            `yf_test_*`.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SifenError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - invoices:write
+  /bill/sifen/documents/{cdc}/:
+    get:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Obtener un documento SIFEN
+      operationId: get_sifen_document
+      description: 'Estado, número, timbrado, totales, QR, protocolo, `sifen_messages` (todos los `dCodRes`/`dMsgRes`
+        que SIFEN contestó: el motivo de un rechazo) y eventos. Es el endpoint al que apunta el polling
+        tras emitir (el estado final llega en `status`). Requiere scope `invoices:read`.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - $ref: '#/components/parameters/SifenCdc'
+      responses:
+        '200':
+          description: Documento.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenDocument'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - invoices:read
+  /bill/sifen/documents/{cdc}/xml/:
+    get:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: XML firmado del documento
+      operationId: get_sifen_document_xml
+      description: El XML firmado exactamente como se envió a SIFEN (`application/xml`). Requiere scope
+        `invoices:read`.
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - $ref: '#/components/parameters/SifenCdc'
+      responses:
+        '200':
+          description: XML firmado.
+          content:
+            application/xml:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: El documento todavía no tiene XML firmado (`error` indica el estado).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - invoices:read
+  /bill/sifen/documents/{cdc}/consulta/:
+    post:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Consultar el documento en SIFEN (siConsDE)
+      operationId: query_sifen_document
+      description: Pregunta en vivo a SIFEN por el CDC y actualiza el estado local si cambió (hallado
+        => `approved`, con espejo en la venta y webhook, igual que el sondeo automático). Reenvía un documento
+        solo si estaba en `unknown`. 30 por minuto. Un token `yf_test_*` recibe 409. Requiere scope `invoices:write`.
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - $ref: '#/components/parameters/SifenCdc'
+      responses:
+        '200':
+          description: Respuesta de SIFEN y estado local.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenConsulta'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Conflicto de estado (`error_code` estable en el cuerpo) o token de prueba `yf_test_*`
+            (las transmisiones a SIFEN están desactivadas en sandbox).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SifenError'
+              example:
+                success: false
+                error: 'SIFEN transmissions are disabled for test-mode tokens (yf_test_*): use a live
+                  token'
+                code: CONFLICT
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          description: 'SIFEN (DNIT/SET) no responde en este momento: reintentá en unos segundos. El estado
+            local no se modificó.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SifenError'
+      x-required-scope:
+      - invoices:write
+  /bill/sifen/documents/{cdc}/void/:
+    post:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Anular un documento SIFEN
+      operationId: void_sifen_document
+      description: 'Camino de anulación según el estado: FE aprobada hace menos de 48 h => evento de cancelación;
+        fuera de ventana => nota de crédito por el saldo; NCE/NDE => cancelación dentro de 168 h (después
+        409); número que nunca se aprobó => inutilización. Repetir es éxito (no reenvía). Soporta `Idempotency-Key`.
+        El dueño del token necesita el permiso `administration:invoices:delete`. 20 por minuto. Requiere
+        scope `invoices:write`.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - $ref: '#/components/parameters/SifenCdc'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SifenVoidRequest'
+      responses:
+        '200':
+          description: Acción realizada.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenVoidResult'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Conflicto de estado (`error_code` estable en el cuerpo) o token de prueba `yf_test_*`
+            (las transmisiones a SIFEN están desactivadas en sandbox).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SifenError'
+              example:
+                success: false
+                error: 'SIFEN transmissions are disabled for test-mode tokens (yf_test_*): use a live
+                  token'
+                code: CONFLICT
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - invoices:write
+  /bill/sifen/documents/{cdc}/events/:
+    get:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Eventos de un documento SIFEN
+      operationId: list_sifen_document_events
+      description: Cancelación, eventos del receptor y, si el número fue inutilizado, la inutilización
+        que lo cubrió, del más viejo al más nuevo. Cada evento trae el código y mensaje de SIFEN. Requiere
+        scope `invoices:read`.
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - $ref: '#/components/parameters/SifenCdc'
+      responses:
+        '200':
+          description: Historial de eventos.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenEventHistory'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - invoices:read
+  /bill/sifen/documents/{cdc}/debit-note/preview/:
+    post:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Previsualizar una nota de débito (NDE)
+      operationId: preview_sifen_debit_note
+      description: 'Calcula la NDE que firmaría `POST .../debit-note/` sobre la FE aprobada `{cdc}`: total
+        y buckets de IVA. No escribe nada, no toma número ni certificado. Requiere scope `invoices:read`.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - $ref: '#/components/parameters/SifenCdc'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SifenDebitNoteRequest'
+      responses:
+        '200':
+          description: Plan de la nota.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenDebitNotePreview'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - invoices:read
+  /bill/sifen/documents/{cdc}/debit-note/:
+    post:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Emitir una nota de débito electrónica (NDE)
+      operationId: create_sifen_debit_note
+      description: 'Emite una NDE (iTiDE 6) asociada a la FE aprobada `{cdc}` (`gCamDEAsoc`). 409 hasta
+        que la FE esté aprobada. Sin topes de monto (como la ND de AFIP). Si la venta es de cuenta corriente
+        con cliente, el débito en cuenta corriente se registra cuando SIFEN aprueba la nota. Soporta `Idempotency-Key`.
+        Permiso del dueño del token: `administration:invoices:create`. 15 cada 5 minutos. Un token `yf_test_*`
+        recibe 409. Requiere scope `invoices:write`.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - $ref: '#/components/parameters/SifenCdc'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SifenDebitNoteRequest'
+      responses:
+        '200':
+          description: 'Nota emitida (queda firmada; la aprobación de SIFEN es asíncrona: seguila por
+            `status`/webhook).'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenDebitNote'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Conflicto de estado (`error_code` estable en el cuerpo) o token de prueba `yf_test_*`
+            (las transmisiones a SIFEN están desactivadas en sandbox).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SifenError'
+              example:
+                success: false
+                error: 'SIFEN transmissions are disabled for test-mode tokens (yf_test_*): use a live
+                  token'
+                code: CONFLICT
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - invoices:write
+  /bill/sifen/inutilizaciones/:
+    post:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Inutilizar un rango de números
+      operationId: create_sifen_inutilizacion
+      description: 'Anula con un evento `rGeVeInu` un rango (hasta 1000) de números nunca usados de una
+        secuencia (timbrado + establecimiento + punto + tipo [+ serie]). 409 si algún número tiene un
+        documento utilizable (aprobado, enviado, firmado, cancelado o ya inutilizado) o todavía no fue
+        entregado por el contador de numeración. Idempotente por (secuencia, rango). Permiso del dueño
+        del token: `administration:invoices:delete`. 20 por minuto. Requiere scope `invoices:write`.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SifenInutilizacionRequest'
+      responses:
+        '200':
+          description: Evento de inutilización.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenInutilizacionResult'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Conflicto de estado (`error_code` estable en el cuerpo) o token de prueba `yf_test_*`
+            (las transmisiones a SIFEN están desactivadas en sandbox).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SifenError'
+              example:
+                success: false
+                error: 'SIFEN transmissions are disabled for test-mode tokens (yf_test_*): use a live
+                  token'
+                code: CONFLICT
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - invoices:write
+  /bill/sifen/catalogs/:
+    get:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Catálogos de códigos SIFEN
+      operationId: get_sifen_catalogs
+      description: Todas las listas de códigos que hacen falta para armar un pedido válido. Requiere scope
+        `invoices:read`.
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      responses:
+        '200':
+          description: Catálogos.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenCatalogs'
+                  message:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - invoices:read
+  /bill/sifen/catalogs/{name}/:
+    get:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Un catálogo SIFEN
+      operationId: get_sifen_catalog
+      description: 'Uno de: `document_types`, `note_motives`, `receptor_id_types`, `iva_affectation`,
+        `iva_rates`, `payment_types`. Requiere scope `invoices:read`.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - name: name
+        in: path
+        required: true
+        schema:
+          type: string
+          enum:
+          - document_types
+          - note_motives
+          - receptor_id_types
+          - iva_affectation
+          - iva_rates
+          - payment_types
+      responses:
+        '200':
+          description: Catálogo pedido.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenCatalogs'
+                  message:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - invoices:read
+  /bill/sifen/readiness/:
+    get:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Preparación para emitir (readiness)
+      operationId: get_sifen_readiness
+      description: '¿Puede el tenant emitir un DE ahora? `can_invoice` + `blockers[]` (identidad, geografía,
+        timbrado, certificado y CSC del ambiente activo, cajas) + `warnings[]` (vencimientos a 30 días).
+        Local y barato: no llama a SIFEN ni a Vault. Con `yf_test_*` se evalúa contra el ambiente de pruebas.
+        Requiere scope `accounting:read`.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      responses:
+        '200':
+          description: Informe.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenReadiness'
+                  message:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - accounting:read
+  /bill/sifen/environment/:
+    post:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Cambiar de ambiente (test/prod)
+      operationId: switch_sifen_environment
+      description: 'Cambia el ambiente SIFEN del contribuyente. Se rechaza con 409 y `error_code` (`certificate_missing`,
+        `csc_missing`, `certificate_expired`, `certificate_not_yet_valid`, `sandbox_prod_forbidden`) si
+        el ambiente destino no puede firmar. Idempotente, auditado. 10 por hora. Permiso del dueño del
+        token: `configuration:fiscal:edit`. Requiere scope `accounting:write`.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SifenEnvironmentRequest'
+      responses:
+        '200':
+          description: Ambiente aplicado.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenEnvironmentResult'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - accounting:write
+  /bill/sifen/ruc/{ruc}/:
+    get:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Consultar un RUC (siConsRUC)
+      operationId: lookup_sifen_ruc
+      description: 'Razón social, estado y DV de un RUC (`80069563` o `80069563-1`). El DV se verifica
+        localmente primero: un DV errado devuelve 400 `dv_mismatch` sin llamar a SIFEN. Caché de 24 h.
+        También sirve de sonda de conectividad: consultá tu propio RUC para probar certificado y alcance
+        de SIFEN. 30 por minuto. `yf_test_*` consulta siempre sifen-test. Requiere scope `invoices:read`.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - name: ruc
+        in: path
+        required: true
+        schema:
+          type: string
+          example: 80069563-1
+      responses:
+        '200':
+          description: RUC encontrado.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenRuc'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          description: 'SIFEN (DNIT/SET) no responde en este momento: reintentá en unos segundos. El estado
+            local no se modificó.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SifenError'
+      x-required-scope:
+      - invoices:read
+  /bill/sifen/numbering/:
+    get:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Último y próximo número de una secuencia
+      operationId: get_sifen_numbering
+      description: Último número entregado y próximo de una secuencia. Cada parámetro toma por defecto
+        el del contribuyente. Requiere scope `invoices:read`.
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - name: tipo_de
+        in: query
+        schema:
+          type: integer
+          default: 1
+      - name: timbrado
+        in: query
+        schema:
+          type: string
+      - name: est
+        in: query
+        schema:
+          type: string
+      - name: punExp
+        in: query
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Numeración.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenNumbering'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - invoices:read
+  /bill/sifen/numbering/seed/:
+    post:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Continuar la numeración desde un número
+      operationId: seed_sifen_numbering
+      description: 'Fija el último número usado de una secuencia (migración desde otro sistema). Solo
+        hacia arriba (409 `not_upward`), nunca por debajo de un documento ya emitido (409 `higher_number_in_use`);
+        no se puede cambiar la serie (409 `serie_mismatch`). Una sola escritura condicional, auditada
+        (`sifen_numbering_seed`). 20 por hora. Permiso del dueño: `configuration:fiscal:edit`. Requiere
+        scope `accounting:write`.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SifenNumberingSeedRequest'
+      responses:
+        '200':
+          description: Resultado (o simulación con `dry_run`).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenNumbering'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - accounting:write
+  /bill/sifen/documents/{cdc}/send-email/:
+    post:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Enviar el KuDE por email
+      operationId: send_sifen_kude_email
+      description: 'Envía por email el link firmado del KuDE (vigencia 7 días) y la URL de consulta de
+        la SET. `email` por defecto es el del cliente de la venta. 20 cada 5 minutos. Permiso del dueño:
+        `administration:invoices:create`. Requiere scope `invoices:write`.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - $ref: '#/components/parameters/SifenCdc'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SifenEmailRequest'
+      responses:
+        '200':
+          description: Email encolado.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenEmailResult'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          description: 'SIFEN (DNIT/SET) no responde en este momento: reintentá en unos segundos. El estado
+            local no se modificó.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SifenError'
+      x-required-scope:
+      - invoices:write
+  /bill/sifen/documents/{cdc}/public-link/:
+    post:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Crear un link público del KuDE
+      operationId: create_sifen_kude_public_link
+      description: Genera un token HMAC con vencimiento obligatorio (60 s a 30 días; default 7 días) para
+        ver el KuDE sin login con `GET /public/sifen/kude/{token}/`. Se rechaza para documentos rechazados,
+        stale, inutilizados o reservados. 60 por minuto. Requiere scope `invoices:read`.
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - $ref: '#/components/parameters/SifenCdc'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SifenPublicLinkRequest'
+      responses:
+        '200':
+          description: Link.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenPublicLink'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          description: 'SIFEN (DNIT/SET) no responde en este momento: reintentá en unos segundos. El estado
+            local no se modificó.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SifenError'
+      x-required-scope:
+      - invoices:read
+  /public/sifen/kude/{token}/:
+    get:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Ver un KuDE por token (sin login)
+      operationId: get_public_sifen_kude
+      description: 'View-model de solo lectura del KuDE de un documento. NO requiere API key: la autenticación
+        es el token firmado. 60 por minuto por IP; `Cache-Control: no-store`.'
+      security: []
+      parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: KuDE.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenKude'
+                  message:
+                    type: string
+        '401':
+          description: Link inválido o vencido.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SifenError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+  /bill/tax_info/taxpayer/sifen/certificates/:
+    get:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Estado de los certificados SIFEN
+      operationId: get_sifen_certificates_status
+      description: 'Metadatos (nunca secretos) del certificado y CSC de `test` y `prod`: sujeto, vencimiento,
+        huella, `expiring_soon` (30 días). Requiere scope `accounting:read`.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      responses:
+        '200':
+          description: Estado por ambiente.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenCertificateStatus'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - accounting:read
+  /bill/tax_info/taxpayer/sifen/certificates/{environment}/:
+    get:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Estado del certificado de un ambiente
+      operationId: get_sifen_certificate_status
+      description: Igual que el listado, de un solo ambiente. Requiere scope `accounting:read`.
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - name: environment
+        in: path
+        required: true
+        schema:
+          type: string
+          enum:
+          - test
+          - prod
+      responses:
+        '200':
+          description: Estado del ambiente.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenCertificateStatus'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - accounting:read
+    post:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Subir el certificado y el CSC
+      operationId: upload_sifen_certificate
+      description: 'Sube el PKCS#12 + contraseña + IdCSC/CSC del ambiente a Vault (`multipart/form-data`).
+        409 si ya hay uno (usá `PUT`). Requiere antes los datos fiscales de Paraguay con RUC y DV. Se
+        valida el archivo en memoria (RSA >= 2048, clientAuth, clave que corresponde, vigente; certificados
+        en hardware se rechazan). 10 por hora. Permiso del dueño: `configuration:fiscal:edit`. Requiere
+        scope `accounting:write`.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - name: environment
+        in: path
+        required: true
+        schema:
+          type: string
+          enum:
+          - test
+          - prod
+      responses:
+        '201':
+          description: Certificado guardado.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenCertificateEnvironment'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          description: 'SIFEN (DNIT/SET) no responde en este momento: reintentá en unos segundos. El estado
+            local no se modificó.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SifenError'
+      x-required-scope:
+      - accounting:write
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SifenCertificateUpload'
+    put:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Reemplazar el certificado
+      operationId: replace_sifen_certificate
+      description: Reemplaza el certificado de un ambiente ya configurado; `csc_id`/`csc` son opcionales
+        (se conservan). 10 por hora. Requiere scope `accounting:write`.
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - name: environment
+        in: path
+        required: true
+        schema:
+          type: string
+          enum:
+          - test
+          - prod
+      responses:
+        '200':
+          description: Certificado reemplazado.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenCertificateEnvironment'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          description: 'SIFEN (DNIT/SET) no responde en este momento: reintentá en unos segundos. El estado
+            local no se modificó.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SifenError'
+      x-required-scope:
+      - accounting:write
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SifenCertificateUpload'
+  /sales/generate_invoice/{sale_id}/:
+    post:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Emitir la factura de una venta existente
+      operationId: generate_sale_invoice
+      description: 'Dispara la emisión fiscal de una venta ya creada; el sistema fiscal (AFIP o SIFEN)
+        lo decide el contribuyente y, en multi-país, el `billing_system` de la venta. En SIFEN la emisión
+        es asíncrona: leé `fiscal` en `GET /sales/{id}/` o suscribite a `invoice.authorized`. El dueño
+        del token mantiene la regla de ventas propias. Requiere scope `invoices:write`.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - name: sale_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Emisión iniciada.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - invoices:write
+  /sales/{sale_id}/credit_note/:
+    post:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Emitir una nota de crédito sobre una venta
+      operationId: create_sale_credit_note
+      description: 'Nota de crédito de la factura de la venta, AFIP o SIFEN. En SIFEN: NCE (iTiDE 5) con
+        `lineas` obligatorias, motivo por defecto 2 (devolución), 409 hasta que la FE esté aprobada, un
+        renglón no se acredita dos veces y la suma de notas vivas no pasa el total de la FE (SIFEN 2417).
+        Los efectos (stock opcional, cuenta corriente, venta acreditada) son los mismos que en AFIP. Soporta
+        `Idempotency-Key`/`X-Idempotency-Key` (hasta 128 caracteres). 10 por minuto. Requiere scope `invoices:write`.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - name: sale_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SifenCreditNoteRequest'
+      responses:
+        '201':
+          description: Nota emitida.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    type: object
+                    additionalProperties: true
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - invoices:write
+  /sales/{sale_id}/credit_note/preview/:
+    post:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Previsualizar la nota de crédito de una venta
+      operationId: preview_sale_credit_note
+      description: En una venta SIFEN devuelve el plan de la NCE (`total`, `lines`, `buckets`, `fe_cdc`)
+        sin emitir ni tomar número. Mismo cuerpo que la emisión (sin `reason` obligatorio). 120 por minuto.
+        Requiere scope `invoices:write`.
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - name: sale_id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 500
+                lineas:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  description: 'OBLIGATORIO en SIFEN: renglones a acreditar de la factura. Un renglón
+                    no se acredita dos veces.'
+                  items:
+                    type: object
+                    required:
+                    - linea
+                    - cantidad
+                    properties:
+                      linea:
+                        type: integer
+                        minimum: 0
+                        description: Índice (desde 0) del renglón de la factura.
+                      cantidad:
+                        type: number
+                        minimum: 0
+      responses:
+        '200':
+          description: Plan de la nota.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenCreditNotePreview'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - invoices:write
+  /sales/{sale_id}/sifen/kude/:
+    get:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: KuDE de una venta SIFEN
+      operationId: get_sale_sifen_kude
+      description: View-model del KuDE de la factura vigente de la venta (desde el XML firmado). 404 si
+        la venta no tiene documento SIFEN; 409 si aún no hay XML firmado. Requiere scope `invoices:read`.
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - name: sale_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: KuDE.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenKude'
+                  message:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - invoices:read
+  /sales/sifen/documents/{cdc}/kude/:
+    get:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: KuDE de un documento por CDC
+      operationId: get_sifen_document_kude
+      description: 'Igual, por CDC: sirve para FE, NCE, NDE, AFE y NRE. Requiere scope `invoices:read`.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - $ref: '#/components/parameters/SifenCdc'
+      responses:
+        '200':
+          description: KuDE.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenKude'
+                  message:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - invoices:read
+  /received_invoices/sifen/events/:
+    post:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Registrar un evento del receptor
+      operationId: register_sifen_receptor_event
+      description: 'Si recibiste un DE de SIFEN, registrá notificación de recepción, conformidad, disconformidad
+        o desconocimiento (o corregí uno con `correction_of`). Se firma con TU certificado. Ventana de
+        15 días desde la emisión y topes por tipo (SIFEN 4150/4152/4156/4200). 60 por minuto. Permiso
+        del dueño: `accounting:received_invoices:edit`. Requiere scope `received_invoices:write`.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SifenReceptorEventRequest'
+      responses:
+        '200':
+          description: Evento registrado.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenReceptorEvent'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - received_invoices:write
+  /sales-points/list/:
+    get:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Listar cajas (puntos de venta)
+      operationId: list_sales_points
+      description: Cajas del tenant, con `billing_system`, `sifen_establishment` y `sifen_expedition_point`
+        (numeración SIFEN por caja). Requiere scope `accounting:read`.
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      responses:
+        '200':
+          description: Cajas.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      allOf:
+                      - $ref: '#/components/schemas/GenericEntity'
+                      - $ref: '#/components/schemas/SifenSalesPointFields'
+                  message:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - accounting:read
+  /sales-points/:
+    post:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Crear una caja
+      operationId: create_sales_point
+      description: 'Crea una caja. Una caja SIFEN lleva `billing_system: "sifen"` + `sifen_establishment`
+        + `sifen_expedition_point` (3 dígitos, habilitados en los datos fiscales de Paraguay, únicos por
+        caja). Requiere scope `accounting:write`.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+              - type: object
+                required:
+                - name
+                properties:
+                  name:
+                    type: string
+                additionalProperties: true
+              - $ref: '#/components/schemas/SifenSalesPointFields'
+      responses:
+        '201':
+          description: Caja creada.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/GenericEntity'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - accounting:write
+  /sales-points/{sales_point_id}/:
+    get:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Obtener una caja
+      operationId: get_sales_point
+      description: Una caja por id, con `billing_system`, `sifen_establishment` y `sifen_expedition_point`.
+        Requiere scope `accounting:read`.
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - name: sales_point_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Caja.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    allOf:
+                    - $ref: '#/components/schemas/GenericEntity'
+                    - $ref: '#/components/schemas/SifenSalesPointFields'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - accounting:read
+    put:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Actualizar una caja
+      operationId: update_sales_point
+      description: Actualiza una caja. Una actualización que toque un campo SIFEN debe mandar `billing_system`,
+        `sifen_establishment` y `sifen_expedition_point` juntos. Requiere scope `accounting:write`.
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - name: sales_point_id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+              - type: object
+                additionalProperties: true
+              - $ref: '#/components/schemas/SifenSalesPointFields'
+      responses:
+        '200':
+          description: Caja actualizada.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/GenericEntity'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - accounting:write
+    delete:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Eliminar una caja
+      operationId: delete_sales_point
+      description: Se aplican las reglas del servicio (no se elimina la caja por defecto ni una CAEA).
+        Requiere scope `accounting:write`.
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - name: sales_point_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Caja eliminada.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/DeleteSuccess'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - accounting:write
+  /bill/sifen/diagnose/:
+    post:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Probar la conectividad con SIFEN (mTLS + RUC propio)
+      operationId: diagnose_sifen_connection
+      description: 'Prueba en vivo con el certificado del tenant: lo carga de Vault, hace el handshake
+        mTLS contra el host de su ambiente (`?wsdl`, no procesa ningún documento) y consulta su propio
+        RUC (siConsRUC). Responde 200 con `ok`, la latencia de cada paso y `actions`: un fallo es un resultado,
+        no un error HTTP. 409 `tax_info_missing` si faltan los datos fiscales. 10 por minuto. `yf_test_*`
+        usa siempre sifen-test. Requiere scope `invoices:write`.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      responses:
+        '200':
+          description: Resultado del diagnóstico.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenDiagnose'
+                  message:
+                    type: string
+        '409':
+          description: '`tax_info_missing`.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SifenError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - invoices:write
+  /bill/sifen/verify-caja/:
+    post:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Verificar que una caja puede emitir
+      operationId: verify_sifen_caja
+      description: 'Valida timbrado vigente, que el par establecimiento/punto de expedición esté autorizado
+        para el contribuyente (o la caja `sales_point_id`), que el certificado esté vigente y emitido
+        al MISMO RUC del contribuyente (`certificate_ruc_mismatch`) y el estado del RUC emisor en SIFEN
+        (siConsRUC; si SIFEN no responde queda en `warning`). `valid` es `false` si algún chequeo de severidad
+        `error` falla; cada chequeo trae su `action`. 20 por minuto. Permiso del dueño del token: `configuration:fiscal:edit`.
+        Requiere scope `accounting:write`.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SifenVerifyCajaRequest'
+      responses:
+        '200':
+          description: Resultado de la verificación.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenVerifyCaja'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: '`tax_info_missing`.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SifenError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - accounting:write
+  /bill/sifen/lotes/{protocol}/:
+    get:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Consultar un lote enviado (siConsLoteDE)
+      operationId: get_sifen_lote
+      description: 'Consulta en vivo el resultado de un lote que ESTE tenant envió (el `lote_protocol`
+        aparece en el documento). Solo lectura: no cambia el estado local (lo hace el sondeo). 404 `lote_not_found`
+        si el protocolo no es del tenant (no se llama a SIFEN), 400 `invalid_protocol`, 409 si no hay
+        certificado usable, 503 `sifen_unreachable`. 30 por minuto. `yf_test_*` consulta siempre sifen-test.
+        Requiere scope `invoices:read`.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - name: protocol
+        in: path
+        required: true
+        description: Número de protocolo del lote (solo dígitos).
+        schema:
+          type: string
+          example: '987654321'
+      responses:
+        '200':
+          description: Estado del lote y de cada documento.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenLote'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Certificado no usable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SifenError'
+        '503':
+          description: SIFEN no responde (`sifen_unreachable`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SifenError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - invoices:read
+  /bill/sifen/types/:
+    get:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Tipos de documento SIFEN (iTiDE) y cuáles emite la API
+      operationId: list_sifen_types
+      description: 'Todos los tipos que construye el núcleo y, para cada uno, si la API lo emite de punta
+        a punta y por qué ruta (`contexts`): FE (1) por venta o sin venta, NCE (5), NDE (6). AFE (4) y
+        NRE (7) figuran con `issuable_via_api: false`. Equivalente de `GET /bill/receipts/types/` de AFIP.
+        Requiere scope `invoices:read`.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      responses:
+        '200':
+          description: Tipos de documento.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenTypes'
+                  message:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - invoices:read
+  /bill/sifen/validate-type/:
+    post:
+      tags:
+      - Facturación Paraguay (SIFEN)
+      summary: Validar un tipo de documento SIFEN
+      operationId: validate_sifen_type
+      description: '¿Se puede emitir `tipo_de` (opcionalmente en un `context`: `sale`, `standalone`, `credit_note`,
+        `debit_note`)? Responde 200 con `valid`, `issuable` y `reason`. Mismas semánticas que `validate-type`
+        de AFIP. 400 `invalid_tipo_de` / `invalid_context`. Requiere scope `invoices:read`.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SifenValidateTypeRequest'
+      responses:
+        '200':
+          description: Veredicto del tipo.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/SifenValidateType'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - invoices:read
+  /sales/totals-preview/:
+    post:
+      tags:
+      - Ventas
+      summary: Calcular los totales de una venta sin guardarla
+      operationId: preview_sale_totals
+      description: 'Totales con los que se guardaría la venta (mismo cuerpo que `POST /sales/`): subtotal,
+        ajustes, `vat_breakdown`, redondeo y `total`. Si el sistema que factura la venta resuelve a SIFEN
+        (cuenta o caja de Paraguay), la respuesta agrega `sifen`: los importes por alícuota (10 / 5 /
+        exento) en guaraníes, el redondeo de 50 Gs (`dRedon`) y el total del documento, con las mismas
+        funciones que firma el emisor; un carrito con una alícuota que SIFEN no admite responde `sifen.valid:
+        false` (no falla). Una cuenta AFIP recibe exactamente la respuesta de siempre. No guarda nada.
+        Requiere scope `sales:write`.
+
+
+        **Monedas.** Mismo cuerpo y mismas reglas que `POST /sales/`: para productos en moneda extranjera
+        enviá `currency` (422 `CURRENCY_REQUIRED` / `MIXED_CURRENCY_CART` si no corresponde); los importes
+        de la respuesta están en esa moneda y se agrega `currency` y `fx`. Una cuenta que solo vende en
+        la moneda por defecto recibe exactamente la respuesta de siempre.'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaleCreate'
+      responses:
+        '200':
+          description: Totales calculados.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    type: object
+                    additionalProperties: true
+                    properties:
+                      subtotal:
+                        type: number
+                      total:
+                        type: number
+                      vat_breakdown:
+                        type: array
+                        items:
+                          type: object
+                          additionalProperties: true
+                      sifen:
+                        $ref: '#/components/schemas/SifenTotalsPreview'
+                  message:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - sales:write
+  /partner/taxpayers/:
+    post:
+      tags:
+      - Cuentas API partner
+      summary: Registrar el CUIT de un usuario final
+      operationId: partner_register_taxpayer
+      description: 'Solo para cuentas con contrato API partner: cualquier otra cuenta recibe 403 con `error_code:
+        API_PARTNER_REQUIRED`. Da de alta el CUIT de un usuario final. El `id` del contribuyente devuelto
+        es el `taxpayer_id` con el que se factura (`POST /bill/receipts/invoice/`). Antes de emitir, el
+        usuario final debe delegar el servicio WSFE al CUIT de YoFacturo (ver `verify-delegation`). Máximo
+        500 altas por hora. Requiere scope `taxpayers:write` (solo cuentas partner).'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PartnerTaxpayerCreateRequest'
+      responses:
+        '201':
+          description: Contribuyente registrado.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/PartnerTaxpayer'
+                  message:
+                    type: string
+                  _links:
+                    $ref: '#/components/schemas/Links'
+        '400':
+          description: 'CUIT mal formado o con dígito verificador inválido (`error_code: API_PARTNER_TAXPAYER_CUIT_INVALID`).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerError'
+              example:
+                success: false
+                error: 'CUIT mal formado o con dígito verificador inválido (`error_code: API_PARTNER_TAXPAYER_CUIT_INVALID`).'
+                code: FORBIDDEN
+                error_code: API_PARTNER_TAXPAYER_CUIT_INVALID
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 'El token no tiene el scope requerido, o la cuenta no es una cuenta API partner
+            (`error_code: API_PARTNER_REQUIRED`).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerError'
+              example:
+                success: false
+                error: 'El token no tiene el scope requerido, o la cuenta no es una cuenta API partner
+                  (`error_code: API_PARTNER_REQUIRED`).'
+                code: FORBIDDEN
+                error_code: API_PARTNER_REQUIRED
+        '409':
+          description: El CUIT ya está registrado y activo (`API_PARTNER_TAXPAYER_DUPLICATE`), es el CUIT
+            principal de la cuenta (`API_PARTNER_TAXPAYER_IS_PRIMARY`) o ya lo registró otra cuenta (`API_PARTNER_TAXPAYER_CUIT_CLAIMED`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerError'
+              example:
+                success: false
+                error: El CUIT ya está registrado y activo (`API_PARTNER_TAXPAYER_DUPLICATE`), es el CUIT
+                  principal de la cuenta (`API_PARTNER_TAXPAYER_IS_PRIMARY`) o ya lo registró otra cuenta
+                  (`API_PARTNER_TAXPAYER_CUIT_CLAIMED`).
+                code: FORBIDDEN
+                error_code: API_PARTNER_TAXPAYER_CUIT_CLAIMED
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - taxpayers:write
+    get:
+      tags:
+      - Cuentas API partner
+      summary: Listar los CUIT registrados
+      operationId: partner_list_taxpayers
+      description: 'Solo para cuentas con contrato API partner: cualquier otra cuenta recibe 403 con `error_code:
+        API_PARTNER_REQUIRED`. Lista paginada por cursor de los contribuyentes activos. Pedí la página
+        siguiente con `cursor=<next_cursor>` hasta que `next_cursor` sea `null`. Requiere scope `taxpayers:read`
+        (solo cuentas partner).'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        description: Tamaño de página (máx. 500).
+        schema:
+          type: integer
+          maximum: 500
+      - name: cursor
+        in: query
+        required: false
+        description: '`next_cursor` de la página anterior.'
+        schema:
+          type: string
+      - name: q
+        in: query
+        required: false
+        description: Busca por CUIT o razón social.
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Página de contribuyentes.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/PartnerTaxpayerPage'
+                  message:
+                    type: string
+                  _links:
+                    $ref: '#/components/schemas/Links'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 'El token no tiene el scope requerido, o la cuenta no es una cuenta API partner
+            (`error_code: API_PARTNER_REQUIRED`).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerError'
+              example:
+                success: false
+                error: 'El token no tiene el scope requerido, o la cuenta no es una cuenta API partner
+                  (`error_code: API_PARTNER_REQUIRED`).'
+                code: FORBIDDEN
+                error_code: API_PARTNER_REQUIRED
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - taxpayers:read
+  /partner/taxpayers/{taxpayer_id}/:
+    get:
+      tags:
+      - Cuentas API partner
+      summary: Obtener un CUIT registrado
+      operationId: partner_get_taxpayer
+      description: 'Solo para cuentas con contrato API partner: cualquier otra cuenta recibe 403 con `error_code:
+        API_PARTNER_REQUIRED`. Requiere scope `taxpayers:read` (solo cuentas partner).'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - name: taxpayer_id
+        in: path
+        required: true
+        description: Id del contribuyente (el `id` que devolvió el alta).
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Contribuyente.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/PartnerTaxpayer'
+                  message:
+                    type: string
+                  _links:
+                    $ref: '#/components/schemas/Links'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 'El token no tiene el scope requerido, o la cuenta no es una cuenta API partner
+            (`error_code: API_PARTNER_REQUIRED`).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerError'
+              example:
+                success: false
+                error: 'El token no tiene el scope requerido, o la cuenta no es una cuenta API partner
+                  (`error_code: API_PARTNER_REQUIRED`).'
+                code: FORBIDDEN
+                error_code: API_PARTNER_REQUIRED
+        '404':
+          description: 'Contribuyente no encontrado (`error_code: API_PARTNER_TAXPAYER_NOT_FOUND`).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerError'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - taxpayers:read
+    delete:
+      tags:
+      - Cuentas API partner
+      summary: Dar de baja un CUIT
+      operationId: partner_remove_taxpayer
+      description: 'Solo para cuentas con contrato API partner: cualquier otra cuenta recibe 403 con `error_code:
+        API_PARTNER_REQUIRED`. Baja lógica: no se pueden emitir comprobantes nuevos con ese `taxpayer_id`;
+        los ya emitidos conservan su historial. Requiere scope `taxpayers:write` (solo cuentas partner).'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - name: taxpayer_id
+        in: path
+        required: true
+        description: Id del contribuyente (el `id` que devolvió el alta).
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Contribuyente dado de baja.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  message:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 'El token no tiene el scope requerido, o la cuenta no es una cuenta API partner
+            (`error_code: API_PARTNER_REQUIRED`).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerError'
+              example:
+                success: false
+                error: 'El token no tiene el scope requerido, o la cuenta no es una cuenta API partner
+                  (`error_code: API_PARTNER_REQUIRED`).'
+                code: FORBIDDEN
+                error_code: API_PARTNER_REQUIRED
+        '404':
+          description: 'Contribuyente no encontrado (`error_code: API_PARTNER_TAXPAYER_NOT_FOUND`).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerError'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - taxpayers:write
+  /partner/taxpayers/{taxpayer_id}/verify-delegation/:
+    post:
+      tags:
+      - Cuentas API partner
+      summary: Verificar la delegación WSFE de un CUIT
+      operationId: partner_verify_delegation
+      description: 'Solo para cuentas con contrato API partner: cualquier otra cuenta recibe 403 con `error_code:
+        API_PARTNER_REQUIRED`. Prueba contra ARCA si el usuario final delegó el servicio WSFE al CUIT
+        de YoFacturo y guarda el resultado en ese contribuyente. `delegation_verified` es `true`, `false`
+        o `null` (ARCA no contestó: reintentá, el estado guardado no cambia). Máximo 60 por minuto. Requiere
+        scope `taxpayers:write` (solo cuentas partner).'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - name: taxpayer_id
+        in: path
+        required: true
+        description: Id del contribuyente (el `id` que devolvió el alta).
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Resultado de la verificación.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/PartnerDelegationResult'
+                  message:
+                    type: string
+                  _links:
+                    $ref: '#/components/schemas/Links'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 'El token no tiene el scope requerido, o la cuenta no es una cuenta API partner
+            (`error_code: API_PARTNER_REQUIRED`).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerError'
+              example:
+                success: false
+                error: 'El token no tiene el scope requerido, o la cuenta no es una cuenta API partner
+                  (`error_code: API_PARTNER_REQUIRED`).'
+                code: FORBIDDEN
+                error_code: API_PARTNER_REQUIRED
+        '404':
+          description: 'Contribuyente no encontrado (`error_code: API_PARTNER_TAXPAYER_NOT_FOUND`).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerError'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - taxpayers:write
+  /partner/usage/:
+    get:
+      tags:
+      - Cuentas API partner
+      summary: Uso y estimado del período
+      operationId: partner_get_usage
+      description: 'Solo para cuentas con contrato API partner: cualquier otra cuenta recibe 403 con `error_code:
+        API_PARTNER_REQUIRED`. CUIT activos del período (con al menos un comprobante autorizado con CAE
+        real), CUIT extra y el estimado en pesos enteros, calculado por el backend. Requiere scope `taxpayers:read`
+        (solo cuentas partner).'
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      responses:
+        '200':
+          description: Uso del período.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/PartnerUsage'
+                  message:
+                    type: string
+                  _links:
+                    $ref: '#/components/schemas/Links'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: 'El token no tiene el scope requerido, o la cuenta no es una cuenta API partner
+            (`error_code: API_PARTNER_REQUIRED`).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerError'
+              example:
+                success: false
+                error: 'El token no tiene el scope requerido, o la cuenta no es una cuenta API partner
+                  (`error_code: API_PARTNER_REQUIRED`).'
+                code: FORBIDDEN
+                error_code: API_PARTNER_REQUIRED
+        '404':
+          description: 'Cuenta partner no encontrada (`error_code: API_PARTNER_NOT_FOUND`).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PartnerError'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - taxpayers:read
+  /webhooks/endpoints/{endpoint_id}/rotate-secret:
+    post:
+      tags:
+      - Webhooks
+      summary: Rotar el secreto de firma de un endpoint
+      operationId: rotate_webhook_endpoint_secret
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - name: endpoint_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Endpoint con el secreto nuevo (se devuelve UNA SOLA VEZ). El anterior deja de validar
+            de inmediato.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/WebhookEndpointCreated'
+                  message:
+                    type: string
+                  _links:
+                    $ref: '#/components/schemas/Links'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - webhooks:write
+      description: Requiere scope `webhooks:write`.
+  /webhooks/endpoints/{endpoint_id}/test:
+    post:
+      tags:
+      - Webhooks
+      summary: Enviar un evento de prueba a un endpoint
+      operationId: send_webhook_endpoint_test
+      security:
+      - ApiKeyHeader: []
+      - ApiKeyBearer: []
+      parameters:
+      - name: endpoint_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '202':
+          description: 'Entrega de prueba encolada: firmada igual que las reales, con `event: "webhook.test"`
+            (no es suscribible) y visible en GET /webhooks/deliveries.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    enum:
+                    - true
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      delivery_id:
+                        type: string
+                      event_type:
+                        type: string
+                        example: webhook.test
+                  message:
+                    type: string
+                  _links:
+                    $ref: '#/components/schemas/Links'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+      x-required-scope:
+      - webhooks:write
+      description: Requiere scope `webhooks:write`. El endpoint tiene que estar activo (409 si está pausado).
 components:
   securitySchemes:
     ApiKeyHeader:
@@ -7587,13 +10726,16 @@ components:
         Reduce el payload cuando solo se necesitan algunos campos.
       schema:
         type: string
-    EntityId:
-      name: entity_id_path
+    SifenCdc:
+      name: cdc
       in: path
       required: true
-      description: placeholder — sobreescrito por operación
+      description: 'CDC: Código de Control del DE, 44 dígitos (módulo 11). Se lee de `fiscal.cdc` en `GET
+        /sales/{id}/` o de la lista de documentos.'
       schema:
         type: string
+        pattern: ^[0-9]{44}$
+      example: 01800695631001001000000112026100710000000013
   headers:
     RateLimitLimit:
       description: Límite de requests para la ventana vigente.
@@ -7745,6 +10887,11 @@ components:
           description: Detalle opcional por campo (solo en errores de validación).
           items:
             type: string
+        error_code:
+          type: string
+          description: Código estable del error de negocio (ej. `CURRENCY_REQUIRED`, `MIXED_CURRENCY_CART`,
+            `FOREIGN_CURRENCY_NOT_SUPPORTED`, `INVOICE_FX_RATE_UNAVAILABLE`, `SALE_TENDER_AMOUNT_INVALID`,
+            `OFFLINE_FOREIGN_CURRENCY_REQUIRES_CONNECTION`).
     GenericEntity:
       type: object
       description: 'Forma del recurso deliberadamente permisiva: el backend valida contra un JSON Schema
@@ -7866,6 +11013,11 @@ components:
             type: array
             items:
               type: string
+          price_currency:
+            type: string
+            example: USD
+            description: Presente solo en productos cuyo precio NO está en la moneda por defecto de la
+              cuenta.
     ProductCreate:
       type: object
       required:
@@ -8001,6 +11153,14 @@ components:
                   type: string
                 value:
                   type: string
+        price_currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+          example: USD
+          description: Moneda ISO-4217 en la que está expresado `base_price`. Omitido o igual a la moneda
+            por defecto de la cuenta = el producto se vende en esa moneda (no se guarda el campo). Una
+            moneda no permitida para la cuenta responde 422. Se informa en `GET /company/` (`allowed_price_currencies`).
       additionalProperties: true
     ProductUpdate:
       type: object
@@ -8136,6 +11296,14 @@ components:
                   type: string
                 value:
                   type: string
+        price_currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+          example: USD
+          description: Moneda ISO-4217 en la que está expresado `base_price`. Omitido o igual a la moneda
+            por defecto de la cuenta = el producto se vende en esa moneda (no se guarda el campo). Una
+            moneda no permitida para la cuenta responde 422. Se informa en `GET /company/` (`allowed_price_currencies`).
       additionalProperties: true
     Customer:
       allOf:
@@ -8349,6 +11517,18 @@ components:
           invoice_id:
             type: string
             description: Id del comprobante AFIP asociado, si generate_invoice fue true.
+          fiscal:
+            anyOf:
+            - $ref: '#/components/schemas/SifenFiscal'
+            - type: 'null'
+            description: Resumen fiscal SIFEN de la venta (null en ventas AFIP o sin documento todavía).
+          currency:
+            type: string
+            example: USD
+            description: Moneda de la venta. Presente solo cuando NO es la moneda por defecto de la cuenta
+              (ventas en pesos no traen `currency` ni `fx`).
+          fx:
+            $ref: '#/components/schemas/SaleFx'
     SaleCreate:
       type: object
       required:
@@ -8406,6 +11586,9 @@ components:
         tax_type:
           type: string
         tax_rate:
+          description: 'Surcharge % over the items subtotal, added to the charged total and invoiced as
+            a "Recargo" line (the POS surcharge). It is NOT the IVA rate: the IVA alicuota is per line
+            (the product''s sale_iva_rate / item metadata.vat_rate).'
           type: number
           minimum: 0
           maximum: 100
@@ -8418,12 +11601,47 @@ components:
         payment:
           type: object
           additionalProperties: true
+          description: 'Datos del cobro. En una venta en moneda extranjera cada cobro puede entregarse
+            en pesos: `currency` ("ARS"), `tendered_amount` (monto entregado en pesos) y `rate` (cotización)
+            se calculan y validan en el servidor contra `fx.rate`; el `amount` siempre está en la moneda
+            de la venta. Errores 422: `SALE_TENDER_AMOUNT_INVALID`, `SALE_TENDER_CURRENCY_UNSUPPORTED`,
+            `SALE_TENDER_LOCAL_CURRENCY_UNKNOWN`, `SALE_TENDER_MODO_UNAVAILABLE`.'
+          properties:
+            currency:
+              type: string
+              example: ARS
+            tendered_amount:
+              type: number
+            rate:
+              type: string
         warehouse_id:
           type: string
           description: Depósito desde el que se descuenta el stock.
         sales_point_id:
           type: string
           description: Punto de venta fiscal (determina el PV de la factura si se emite).
+        request_fiscal_document:
+          type: boolean
+          description: 'Pide el documento fiscal de la venta sin elegir letra: en un tenant/caja SIFEN
+            equivale a `generate_invoice: true`; en AFIP se ignora (usá `generate_invoice` + letra). Se
+            ignora en ventas offline o con remito.'
+        billing_system:
+          type: string
+          enum:
+          - afip
+          - sifen
+          description: 'Solo para tenants con más de un sistema fiscal: marca la venta con el sistema
+            que debe emitirla. Si se omite manda el sistema activo del contribuyente (o el de la caja).'
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+          example: USD
+          description: 'Moneda de la venta. **Obligatoria** si algún producto tiene `price_currency` distinta
+            de la moneda por defecto (si falta: 422 `CURRENCY_REQUIRED`) y debe coincidir con la de los
+            productos (un carrito con dos monedas: 422 `MIXED_CURRENCY_CART`). Omitila en ventas en moneda
+            por defecto: el cuerpo es el de siempre. El servidor agrega `fx` con la cotización oficial;
+            un `fx` o `price_currency` enviado por el cliente se ignora.'
       additionalProperties: true
     InvoiceCreateRequest:
       type: object
@@ -8543,10 +11761,18 @@ components:
           type: boolean
           description: 'true: los `precio_unitario` son finales, IVA incluido (default con API token).
             false: son netos de IVA y el backend suma el IVA (el comportamiento anterior al 5-oct-2026).'
+        taxpayer_id:
+          type: string
+          description: 'Solo cuentas API partner: id del contribuyente registrado en `POST /partner/taxpayers/`.
+            La letra, el punto de venta y el CUIT emisor salen de ese contribuyente. Las notas de crédito
+            y débito no lo reciben: toman el emisor del comprobante original.'
       additionalProperties: true
     NoteCreateRequest:
       type: object
-      description: Nota de crédito/débito asociada a un comprobante existente.
+      description: 'Nota de crédito/débito asociada a un comprobante existente. Nota de débito: los `items`
+        siguen `precios_con_iva` igual que `/invoice/` (con API key, precio FINAL por defecto; `precios_con_iva:
+        false` = neto) y, si no se manda `importe_total` ni `porcentaje_aplicar`, el total sale de los
+        ítems. Con `importe_total` explícito, los ítems quedan como detalle (contrato anterior).'
       required:
       - comprobante_asociado_id
       - items
@@ -8619,6 +11845,10 @@ components:
         idempotent_replay:
           type: boolean
           description: true si esta respuesta es la reproducción de un request anterior idéntico.
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ComprobanteItem'
       additionalProperties: true
     CurrentAccount:
       allOf:
@@ -8769,8 +11999,8 @@ components:
           secret:
             type: string
             description: 'Secreto completo `whsec_...` usado para firmar cada delivery (HMAC-SHA256).
-              Se devuelve UNA SOLA VEZ acá — solo persiste su forma cifrada. Si se pierde, no hay forma
-              de recuperarlo: hay que borrar el endpoint y crear uno nuevo.'
+              Se devuelve UNA SOLA VEZ acá (y en `POST /webhooks/endpoints/{endpoint_id}/rotate-secret`):
+              solo persiste su forma cifrada. Si se pierde, generá uno nuevo con rotate-secret.'
             example: whsec_9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a
     WebhookEvent:
       type: object
@@ -8856,6 +12086,41 @@ components:
           type: boolean
           enum:
           - false
+    ComprobanteItem:
+      type: object
+      description: Línea del comprobante tal como se guardó (claves AFIP CamelCase Descripcion/Cantidad/Precio/Bonificacion/IvaId,
+        o minúsculas descripcion/cantidad/precio_unitario/bonificacion en comprobantes de otros flujos)
+        más los importes de la línea calculados por el backend al servirla. Los clientes muestran estos
+        importes; no los recalculan.
+      properties:
+        Descripcion:
+          type: string
+        Cantidad:
+          type: number
+        Precio:
+          type: number
+          description: Precio unitario (neto de IVA cuando el tipo discrimina IVA).
+        Bonificacion:
+          type: number
+        IvaId:
+          type: integer
+          description: Alícuota AFIP (3=0%, 4=10.5%, 5=21%, 6=27%, 8=5%, 9=2.5%).
+        importe_neto_linea:
+          type: number
+          description: 'Neto de la línea: Precio x Cantidad - Bonificacion, redondeado a 2 decimales (ROUND_HALF_UP).
+            Calculado por el backend.'
+          example: 190.0
+        importe_iva_linea:
+          type: number
+          description: IVA de la línea (0 si el tipo no discrimina IVA, 0% o exento). Calculado por el
+            backend.
+          example: 39.9
+        importe_total_linea:
+          type: number
+          description: importe_neto_linea + importe_iva_linea. La suma de las líneas puede diferir de
+            importe_total por el redondeo por línea y no incluye tributos.
+          example: 229.9
+      additionalProperties: true
     CreditNoteCreateRequest:
       type: object
       description: 'Nota de crédito sobre un comprobante aprobado. Cuánto acreditar se indica con UNO
@@ -8920,3 +12185,1773 @@ components:
           type: boolean
           default: false
       additionalProperties: true
+    SifenError:
+      allOf:
+      - $ref: '#/components/schemas/Error'
+      - type: object
+        properties:
+          error_code:
+            type: string
+            description: Motivo estable legible por máquina (p. ej. `use_sifen_routes`, `certificate_missing`,
+              `csc_missing`, `not_upward`, `dv_mismatch`, `sifen_unreachable`, `ruc_not_found`). Solo
+              en los errores que lo definen.
+            example: certificate_missing
+      description: 'Error estándar `{success:false, error, code}` más `error_code` en las rutas de operación.
+        Los códigos de resultado de SIFEN (`dCodRes`/`dMsgRes`) NO viajan acá: se leen de `sifen_messages`
+        del documento.'
+    SifenFiscal:
+      type: object
+      description: 'Resumen fiscal de una venta SIFEN (`fiscal` en `GET /sales/{id}/`). `null` mientras
+        no se emitió ningún documento (el `201` de `POST /sales/` no lo trae: la emisión es asíncrona).'
+      properties:
+        system:
+          type: string
+          enum:
+          - sifen
+        cdc:
+          type: string
+          description: CDC del documento vigente de la venta.
+        status:
+          $ref: '#/components/schemas/SifenStatus'
+        number:
+          type: string
+          example: 001-001-0000001
+        qr_url:
+          type: string
+          description: URL de consulta del DE en la SET con el QR (la arma el servidor con el CSC).
+        timbrado:
+          type: string
+          example: '12345678'
+        inicio:
+          type: string
+          description: Inicio de vigencia del timbrado.
+        kude_url:
+          type: string
+          example: /api/v1/sales/sifen/documents/{cdc}/kude/
+        rejection:
+          type: object
+          description: 'Solo si SIFEN rechazó el documento: código y mensaje de SIFEN.'
+          properties:
+            code:
+              type: string
+              example: '1908'
+            message:
+              type: string
+        credit_notes:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+          description: Notas de crédito emitidas sobre la venta.
+    SifenStatus:
+      type: string
+      enum:
+      - reserved
+      - signed
+      - sending
+      - sent_sync
+      - sent_lote
+      - in_processing
+      - approved
+      - approved_obs
+      - rejected
+      - unknown
+      - manual
+      - stale
+      - cancelled
+      - inutilized
+      description: 'Estado del documento. `approved` / `approved_obs` = SIFEN lo aprobó (`approved_obs`
+        = con observaciones); `rejected` = SIFEN lo rechazó (ver `sifen_messages`); `reserved`..`in_processing`
+        = en curso; `unknown` = se perdió la respuesta (nunca se reenvía: se consulta con `POST .../consulta/`);
+        `manual` = problema de certificado/TLS que requiere acción; `stale` = firmado hace más de 72 h
+        sin transmitir, hay que reemitir; `cancelled` / `inutilized` = anulado por evento.'
+    SifenDocumentSummary:
+      type: object
+      properties:
+        cdc:
+          type: string
+          example: 01800695631001001000000112026100710000000013
+        tipo_de:
+          type: integer
+          enum:
+          - 1
+          - 4
+          - 5
+          - 6
+          - 7
+          description: 'iTiDE: 1 FE, 4 AFE, 5 NCE, 6 NDE, 7 NRE.'
+        tipo:
+          type: string
+          enum:
+          - FE
+          - AFE
+          - NCE
+          - NDE
+          - NRE
+        kind:
+          type: string
+          enum:
+          - sale
+          - credit_note
+          - debit_note
+        status:
+          $ref: '#/components/schemas/SifenStatus'
+        number:
+          type: string
+          example: 001-001-0000001
+        establecimiento:
+          type: string
+          example: '001'
+        punto_expedicion:
+          type: string
+          example: '001'
+        sale_id:
+          type:
+          - string
+          - 'null'
+        fe_cdc:
+          type:
+          - string
+          - 'null'
+          description: 'En una NCE/NDE: CDC de la factura asociada.'
+        total:
+          type: string
+          description: Total en guaraníes (string decimal, tal cual se firmó).
+          example: '110000'
+        currency:
+          type: string
+          enum:
+          - PYG
+        environment:
+          type: string
+          enum:
+          - test
+          - prod
+        issued_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        approved_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        links:
+          type: object
+          additionalProperties:
+            type: string
+          description: 'Rutas relacionadas: self, xml, consulta, void, events, debit_note, kude.'
+    SifenMessage:
+      type: object
+      description: Una respuesta de SIFEN con código (`dCodRes`/`dMsgRes`), tal como llegó, la más vieja
+        primero.
+      properties:
+        kind:
+          type: string
+          example: recibe_de
+        code:
+          type: string
+          example: '0260'
+        message:
+          type: string
+          example: Aprobado
+        at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+    SifenEvent:
+      type: object
+      description: 'Evento de un documento: cancelación, evento del receptor o inutilización que cubrió
+        su número.'
+      properties:
+        event_key:
+          type: string
+        kind:
+          type: string
+          enum:
+          - cancelacion
+          - inutilizacion
+          - receptor
+        receptor_kind:
+          type:
+          - string
+          - 'null'
+          enum:
+          - notificacion
+          - conformidad
+          - disconformidad
+          - desconocimiento
+          - null
+        status:
+          type: string
+          enum:
+          - pending
+          - approved
+          - rejected
+          - unknown
+        protocol:
+          type:
+          - string
+          - 'null'
+        reason:
+          type:
+          - string
+          - 'null'
+        last_error:
+          type:
+          - string
+          - 'null'
+        attempts:
+          type: integer
+        sifen_code:
+          type:
+          - string
+          - 'null'
+        sifen_message:
+          type:
+          - string
+          - 'null'
+        range:
+          type: object
+          description: Solo en inutilizaciones.
+          properties:
+            desde:
+              type: integer
+            hasta:
+              type: integer
+            tipo_de:
+              type: integer
+            establecimiento:
+              type: string
+            punto_expedicion:
+              type: string
+            serie:
+              type:
+              - string
+              - 'null'
+        created_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        updated_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+    SifenDocument:
+      allOf:
+      - $ref: '#/components/schemas/SifenDocumentSummary'
+      - type: object
+        properties:
+          system:
+            type: string
+            enum:
+            - sifen
+          serie:
+            type:
+            - string
+            - 'null'
+          numero:
+            type:
+            - string
+            - 'null'
+          timbrado:
+            type: string
+            example: '12345678'
+          qr_url:
+            type:
+            - string
+            - 'null'
+          protocol:
+            type:
+            - string
+            - 'null'
+            description: Protocolo de aprobación de SIFEN.
+          lote_protocol:
+            type:
+            - string
+            - 'null'
+          last_error:
+            type:
+            - string
+            - 'null'
+          signed_at:
+            type:
+            - string
+            - 'null'
+            format: date-time
+          processed_at:
+            type:
+            - string
+            - 'null'
+          cancelled_at:
+            type:
+            - string
+            - 'null'
+            format: date-time
+          inutilized_at:
+            type:
+            - string
+            - 'null'
+            format: date-time
+          needs_reissue:
+            type: boolean
+          superseded_by:
+            type:
+            - string
+            - 'null'
+            description: CDC del documento que lo reemplazó (reemisión).
+          sifen_messages:
+            type: array
+            items:
+              $ref: '#/components/schemas/SifenMessage'
+            description: 'Cada `dCodRes`/`dMsgRes` que SIFEN contestó: acá está el motivo de un rechazo.'
+          events:
+            type: array
+            items:
+              $ref: '#/components/schemas/SifenEvent'
+    SifenDocumentList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SifenDocumentSummary'
+        next_cursor:
+          type:
+          - string
+          - 'null'
+          description: Pasalo como `cursor` para la página siguiente; `null` = última página.
+        limit:
+          type: integer
+    SifenVoidRequest:
+      type: object
+      required:
+      - reason
+      properties:
+        reason:
+          type: string
+          minLength: 5
+          maxLength: 500
+          description: Motivo (5 a 500 caracteres; SIFEN recibe los primeros 150).
+    SifenVoidResult:
+      type: object
+      properties:
+        action:
+          type: string
+          enum:
+          - cancelacion
+          - nce
+          - inutilizacion
+          - cancelled
+          description: 'Qué se hizo: `cancelacion` = evento de cancelación (FE aprobada hace menos de
+            48 h, resto de tipos 168 h); `nce` = nota de crédito por el saldo (FE fuera de ventana); `inutilizacion`
+            = el número nunca se aprobó; `cancelled` = ya estaba cancelado (repetición, no se envía nada).'
+        result:
+          type: object
+          additionalProperties: true
+          description: Detalle según la acción (CDC, evento, nota emitida).
+    SifenConsulta:
+      type: object
+      properties:
+        cdc:
+          type: string
+        sifen:
+          type: object
+          properties:
+            found:
+              type: boolean
+            code:
+              type:
+              - string
+              - 'null'
+            message:
+              type:
+              - string
+              - 'null'
+            protocol:
+              type:
+              - string
+              - 'null'
+        previous_status:
+          $ref: '#/components/schemas/SifenStatus'
+        status:
+          $ref: '#/components/schemas/SifenStatus'
+        changed:
+          type: boolean
+    SifenEventHistory:
+      type: object
+      properties:
+        cdc:
+          type: string
+        status:
+          $ref: '#/components/schemas/SifenStatus'
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/SifenEvent'
+    SifenDebitNoteItem:
+      type: object
+      required:
+      - descripcion
+      - importe
+      - tasa_iva
+      properties:
+        descripcion:
+          type: string
+          minLength: 1
+          maxLength: 120
+        importe:
+          type: integer
+          minimum: 1
+          description: Importe BRUTO (IVA incluido) en guaraníes, entero positivo.
+        tasa_iva:
+          type: integer
+          enum:
+          - 10
+          - 5
+          - 0
+          description: 'Alícuota: 10, 5 o 0 (exento).'
+        cantidad:
+          type: integer
+          minimum: 1
+          default: 1
+          description: Entero positivo; el importe debe dividirse exacto entre las unidades.
+    SifenDebitNoteRequest:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            $ref: '#/components/schemas/SifenDebitNoteItem'
+        motivo:
+          type: integer
+          minimum: 1
+          maximum: 8
+          default: 8
+          description: iMotEmi (`GET /bill/sifen/catalogs/note_motives/`). Default 8 = Ajuste de precio.
+        reason:
+          type: string
+          maxLength: 500
+          description: Texto libre del motivo (solo en `POST` real).
+    SifenDebitNotePreview:
+      type: object
+      properties:
+        system:
+          type: string
+          enum:
+          - sifen
+        fe_cdc:
+          type: string
+        fe_total:
+          type: string
+        motivo:
+          type: integer
+        total:
+          type: string
+          description: Total de la nota en guaraníes.
+        lines:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        buckets:
+          type: object
+          additionalProperties:
+            type: string
+          description: 'Bruto por alícuota: `10`, `5`, `0` (exento).'
+    SifenDebitNote:
+      type: object
+      properties:
+        cdc:
+          type: string
+          description: CDC de la NDE.
+        number:
+          type: string
+        status:
+          $ref: '#/components/schemas/SifenStatus'
+        tipo_de:
+          type: integer
+          enum:
+          - 6
+        fe_cdc:
+          type: string
+        total:
+          type: string
+        lines:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        qr_url:
+          type:
+          - string
+          - 'null'
+        links:
+          type: object
+          additionalProperties:
+            type: string
+    SifenInutilizacionRequest:
+      type: object
+      required:
+      - tipo_de
+      - establecimiento
+      - punto_expedicion
+      - desde
+      - hasta
+      - reason
+      properties:
+        tipo_de:
+          type: integer
+          enum:
+          - 1
+          - 4
+          - 5
+          - 6
+          - 7
+        establecimiento:
+          type: string
+          pattern: ^[0-9]{3}$
+        punto_expedicion:
+          type: string
+          pattern: ^[0-9]{3}$
+        desde:
+          type: integer
+          minimum: 1
+        hasta:
+          type: integer
+          minimum: 1
+          description: Mayor o igual a `desde`; el rango tiene como máximo 1000 números.
+        reason:
+          type: string
+          minLength: 5
+          maxLength: 500
+        serie:
+          type: string
+          pattern: ^[A-Z]{2}$
+        timbrado:
+          type: string
+          description: 'Opcional: si se manda debe ser el timbrado vigente.'
+    SifenInutilizacionResult:
+      type: object
+      properties:
+        event:
+          $ref: '#/components/schemas/SifenEvent'
+        replayed:
+          type: boolean
+          description: '`true` si el rango ya estaba inutilizado (no se reenvía).'
+        range:
+          type: object
+          properties:
+            tipo_de:
+              type: integer
+            establecimiento:
+              type: string
+            punto_expedicion:
+              type: string
+            serie:
+              type:
+              - string
+              - 'null'
+            desde:
+              type: integer
+            hasta:
+              type: integer
+            numbers:
+              type: integer
+    SifenIssue:
+      type: object
+      properties:
+        code:
+          type: string
+          example: certificate_missing
+        message:
+          type: string
+          description: En español.
+        action_url:
+          type: string
+          example: /settings/legal
+        action_label:
+          type: string
+        api_action:
+          type: string
+          example: POST /api/v1/bill/tax_info/taxpayer/sifen/certificates/test/
+    SifenReadiness:
+      type: object
+      properties:
+        can_invoice:
+          type: boolean
+        blockers:
+          type: array
+          items:
+            $ref: '#/components/schemas/SifenIssue'
+          description: Lo que impide emitir hoy.
+        warnings:
+          type: array
+          items:
+            $ref: '#/components/schemas/SifenIssue'
+          description: Lo que va a fallar pronto (timbrado o certificado a 30 días de vencer).
+        environment:
+          type:
+          - string
+          - 'null'
+          enum:
+          - test
+          - prod
+          - null
+        checks:
+          type: object
+          additionalProperties: true
+          description: 'Hechos de cada chequeo: `timbrado`, `certificate`, `cajas`, `environments`.'
+    SifenEnvironmentRequest:
+      type: object
+      required:
+      - environment
+      properties:
+        environment:
+          type: string
+          enum:
+          - test
+          - prod
+    SifenEnvironmentResult:
+      type: object
+      properties:
+        previous_environment:
+          type: string
+        environment:
+          type: string
+        changed:
+          type: boolean
+        certificate:
+          type: object
+          properties:
+            not_after:
+              type:
+              - string
+              - 'null'
+            fingerprint_sha256:
+              type:
+              - string
+              - 'null'
+    SifenRuc:
+      type: object
+      properties:
+        ruc:
+          type: string
+          example: '80069563'
+        dv:
+          type: string
+          example: '1'
+        ruc_dv:
+          type: string
+          example: 80069563-1
+        found:
+          type: boolean
+        name:
+          type: string
+        status:
+          type: object
+          properties:
+            code:
+              type:
+              - string
+              - 'null'
+            description:
+              type:
+              - string
+              - 'null'
+              example: ACTIVO
+        active:
+          type: boolean
+        electronic_invoicer:
+          type:
+          - boolean
+          - 'null'
+          description: Si el RUC ya es facturador electrónico.
+        environment:
+          type: string
+          enum:
+          - test
+          - prod
+        cached:
+          type: boolean
+          description: Respuesta del caché de 24 h.
+    SifenNumbering:
+      type: object
+      properties:
+        key:
+          type: string
+        ruc:
+          type: string
+        timbrado:
+          type: string
+        establecimiento:
+          type: string
+        punto_expedicion:
+          type: string
+        tipo_de:
+          type: integer
+        serie:
+          type:
+          - string
+          - 'null'
+        counter_exists:
+          type: boolean
+        last_number:
+          type: string
+          example: '0000012'
+        next_number:
+          type: string
+          example: '0000013'
+        highest_document_number:
+          type:
+          - integer
+          - 'null'
+          description: Número más alto de un documento ya emitido en la secuencia.
+        applied:
+          type: boolean
+        changed:
+          type: boolean
+    SifenNumberingSeedRequest:
+      type: object
+      required:
+      - last_used
+      properties:
+        last_used:
+          type: integer
+          minimum: 0
+          maximum: 9999999
+          description: Último número ya usado (por ejemplo en el sistema anterior); el próximo documento
+            sale con `last_used + 1`.
+        tipo_de:
+          type: integer
+          default: 1
+        timbrado:
+          type: string
+        est:
+          type: string
+          pattern: ^[0-9]{3}$
+        punExp:
+          type: string
+          pattern: ^[0-9]{3}$
+        dry_run:
+          type: boolean
+          default: false
+          description: Valida y devuelve el resultado sin escribir.
+    SifenEmailRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          description: Destinatario; por defecto el email del cliente de la venta.
+    SifenEmailResult:
+      type: object
+      properties:
+        email_sent_to:
+          type: string
+        cdc:
+          type: string
+        document_number:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+    SifenPublicLinkRequest:
+      type: object
+      properties:
+        expires_in_seconds:
+          type: integer
+          minimum: 60
+          maximum: 2592000
+          default: 604800
+          description: 'Vigencia del link: 60 s a 30 días (default 7 días).'
+    SifenPublicLink:
+      type: object
+      properties:
+        token:
+          type: string
+        cdc:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        expires_in_seconds:
+          type: integer
+        api_url:
+          type: string
+          description: URL pública (sin login) del KuDE en JSON.
+        print_path:
+          type: string
+          description: Ruta de la página de impresión pública del KuDE.
+    SifenKude:
+      type: object
+      additionalProperties: true
+      description: 'View-model del KuDE armado desde el XML firmado: título por tipo, emisor, timbrado
+        y vigencia, número, receptor, ítems por columna de IVA, totales, QR (`dCarQR`), CDC en 11 grupos
+        de 4, leyenda legal. Los montos son strings decimales exactamente como se firmaron (nada se recalcula).
+        El FE lo dibuja en `/print/sifen/{cdc}/kude`.'
+    SifenCertificateEnvironment:
+      type: object
+      properties:
+        configured:
+          type: boolean
+        subject:
+          type: string
+        serial_number:
+          type: string
+        not_before:
+          type: string
+        not_after:
+          type: string
+        fingerprint_sha256:
+          type: string
+        has_csc:
+          type: boolean
+        uploaded_at:
+          type: string
+        uploaded_by:
+          type: string
+        expired:
+          type: boolean
+        not_yet_valid:
+          type: boolean
+        days_to_expiry:
+          type: integer
+        expiring_soon:
+          type: boolean
+          description: Vigente pero vence en 30 días o menos.
+    SifenCertificateStatus:
+      type: object
+      properties:
+        environments:
+          type: object
+          properties:
+            test:
+              $ref: '#/components/schemas/SifenCertificateEnvironment'
+            prod:
+              $ref: '#/components/schemas/SifenCertificateEnvironment'
+    SifenCertificateUpload:
+      type: object
+      required:
+      - file
+      - password
+      properties:
+        file:
+          type: string
+          format: binary
+          description: Certificado F1 (software) en PKCS#12 (`.p12`/`.pfx`), hasta 5 MB. RSA >= 2048 con
+            clientAuth; no se aceptan certificados en hardware (token).
+        password:
+          type: string
+          format: password
+          description: 'Contraseña del PKCS#12. Nunca se guarda en el tenant: el certificado y el CSC
+            viven en Vault.'
+        csc_id:
+          type: string
+          description: 'IdCSC del ambiente (Marangatu): 1 a 4 dígitos. Obligatorio al subir; opcional
+            al reemplazar (se conserva el anterior).'
+        csc:
+          type: string
+          format: password
+          description: 'Código de Seguridad del Contribuyente: exactamente 32 caracteres alfanuméricos.
+            Igual que `csc_id`.'
+    SifenReceptorEventRequest:
+      type: object
+      required:
+      - kind
+      - cdc
+      properties:
+        kind:
+          type: string
+          enum:
+          - notificacion
+          - conformidad
+          - disconformidad
+          - desconocimiento
+        cdc:
+          type: string
+          pattern: ^[0-9]{44}$
+        emitted_at:
+          type:
+          - string
+          - 'null'
+          description: ISO 8601.
+        received_at:
+          type:
+          - string
+          - 'null'
+          description: ISO 8601.
+        total_gs:
+          type:
+          - string
+          - integer
+          - 'null'
+        reason:
+          type: string
+          maxLength: 500
+        total:
+          type: boolean
+          default: true
+          description: Conformidad total (`true`) o parcial.
+        correction_of:
+          type:
+          - string
+          - 'null'
+          maxLength: 100
+          description: '`event_key` del evento que se corrige (conformidad, disconformidad, desconocimiento).'
+    SifenReceptorEvent:
+      type: object
+      properties:
+        event_key:
+          type:
+          - string
+          - 'null'
+        receptor_kind:
+          type:
+          - string
+          - 'null'
+        cdc:
+          type:
+          - string
+          - 'null'
+        status:
+          type:
+          - string
+          - 'null'
+        protocol:
+          type:
+          - string
+          - 'null'
+        event_id:
+          type:
+          - string
+          - 'null'
+        correction_of:
+          type:
+          - string
+          - 'null'
+        reason:
+          type:
+          - string
+          - 'null'
+        last_error:
+          type:
+          - string
+          - 'null'
+        environment:
+          type:
+          - string
+          - 'null'
+    SifenCreditNoteRequest:
+      type: object
+      required:
+      - reason
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+        lineas:
+          type: array
+          minItems: 1
+          maxItems: 500
+          description: 'OBLIGATORIO en SIFEN: renglones a acreditar de la factura. Un renglón no se acredita
+            dos veces.'
+          items:
+            type: object
+            required:
+            - linea
+            - cantidad
+            properties:
+              linea:
+                type: integer
+                minimum: 0
+                description: Índice (desde 0) del renglón de la factura.
+              cantidad:
+                type: number
+                minimum: 0
+        restore_stock:
+          type: boolean
+          default: false
+        update_current_account:
+          type: boolean
+          description: Acredita la cuenta corriente (default activo en ventas a cuenta corriente).
+    SifenCreditNotePreview:
+      type: object
+      properties:
+        total:
+          type: string
+        lines:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        buckets:
+          type: object
+          additionalProperties:
+            type: string
+        fe_cdc:
+          type: string
+    SifenSalesPointFields:
+      type: object
+      description: Campos de una caja (`/sales-points/`) que numeran los documentos de SIFEN.
+      properties:
+        billing_system:
+          type: string
+          enum:
+          - afip
+          - sifen
+        sifen_establishment:
+          type: string
+          pattern: ^[0-9]{3}$
+          example: '001'
+        sifen_expedition_point:
+          type: string
+          pattern: ^[0-9]{3}$
+          example: '001'
+    SifenCatalogs:
+      type: object
+      additionalProperties: true
+      description: 'Listas de códigos: `document_types` (iTiDE y si se emite por API), `note_motives`
+        (iMotEmi de NCE/NDE), `receptor_id_types`, `iva_affectation`, `iva_rates` (10, 5, 0 = exento),
+        `payment_types`. Estático por deploy (`Cache-Control: private, max-age=3600`).'
+    SifenCreateItem:
+      type: object
+      required:
+      - descripcion
+      properties:
+        descripcion:
+          type: string
+          maxLength: 120
+          example: Honorarios octubre
+        cantidad:
+          type: number
+          minimum: 0.001
+          default: 1
+          description: Hasta 3 decimales.
+        precio_unitario:
+          type: integer
+          description: Precio unitario BRUTO (IVA incluido) en guaraníes. Mandá este O `importe`.
+        importe:
+          type: integer
+          description: Total BRUTO (IVA incluido) del renglón en guaraníes enteros. Mandá este O `precio_unitario`.
+          example: 1100000
+        tasa_iva:
+          type: integer
+          enum:
+          - 10
+          - 5
+          - 0
+          default: 10
+          description: 10, 5 o 0 (exento).
+        codigo:
+          type: string
+          maxLength: 20
+          description: Código interno (`dCodInt`); default `ITEM-<n>`.
+    SifenCreateReceptor:
+      type: object
+      required:
+      - document_type
+      properties:
+        document_type:
+          type: string
+          enum:
+          - ruc
+          - ci
+          - none
+          description: '`ruc` (se valida con siConsRUC), `ci` (cédula) o `none` (innominado, solo bajo
+            60.000.000 Gs).'
+        document_number:
+          type: string
+          maxLength: 20
+          description: Obligatorio salvo `none`.
+          example: 80012345-6
+        name:
+          type: string
+          maxLength: 255
+        email:
+          type: string
+          maxLength: 100
+        phone:
+          type: string
+          maxLength: 100
+    SifenCreateDocumentRequest:
+      type: object
+      required:
+      - items
+      description: 'Factura electrónica SIN venta. El backend calcula base, IVA, redondeo y total a partir
+        de los importes brutos: no mandes totales.'
+      properties:
+        tipo_de:
+          type: integer
+          enum:
+          - 1
+          default: 1
+          description: Solo la FE (1); otro tipo responde 400 `type_not_issuable`.
+        receptor:
+          $ref: '#/components/schemas/SifenCreateReceptor'
+        items:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/SifenCreateItem'
+        condicion:
+          type: string
+          enum:
+          - contado
+          - credito
+          default: contado
+        pago_tipo:
+          type: integer
+          default: 1
+          description: iTiPago (ver `/catalogs/payment_types/`); tarjeta y cheque no se admiten en esta
+            ruta.
+        plazo_dias:
+          type: integer
+          minimum: 1
+          maximum: 365
+          default: 30
+          description: 'Solo con `condicion: credito`.'
+        sales_point_id:
+          type: string
+          description: Caja SIFEN con su numeración. Excluyente con `establecimiento` + `punto_expedicion`.
+        establecimiento:
+          type: string
+          example: '001'
+        punto_expedicion:
+          type: string
+          example: '002'
+        info_emisor:
+          type: string
+          maxLength: 500
+          description: Información de interés del emisor.
+        client_reference:
+          type: string
+          maxLength: 64
+          description: 'Referencia del cliente: repetirla devuelve el mismo documento (`replayed: true`)
+            sin consumir otro número.'
+    SifenStandaloneDocument:
+      type: object
+      properties:
+        cdc:
+          type: string
+          example: 01800695631001001000000112026100710000000013
+        number:
+          type: string
+          example: 001-001-0000001
+        status:
+          type: string
+          example: signed
+        tipo_de:
+          type: integer
+          example: 1
+        kind:
+          type: string
+          enum:
+          - standalone
+        total:
+          type: string
+          example: '1155000'
+          description: Total del documento en guaraníes, calculado por el backend.
+        currency:
+          type: string
+          enum:
+          - PYG
+        lines:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        buckets:
+          type: object
+          additionalProperties:
+            type: string
+          description: Bruto por alícuota (`10`, `5`, `0` = exento).
+        qr_url:
+          type:
+          - string
+          - 'null'
+        replayed:
+          type: boolean
+          description: '`true` cuando devolvió el documento de un `client_reference` ya emitido.'
+        links:
+          type: object
+          additionalProperties:
+            type: string
+    SifenDiagnoseStep:
+      type: object
+      properties:
+        name:
+          type: string
+          enum:
+          - certificate
+          - tls_handshake
+          - siConsRUC
+          - connection
+        ok:
+          type: boolean
+        latency_ms:
+          type:
+          - integer
+          - 'null'
+        detail:
+          type: string
+        error_code:
+          type: string
+        http_status:
+          type: integer
+        sifen_code:
+          type: string
+    SifenDiagnose:
+      type: object
+      properties:
+        ok:
+          type: boolean
+          description: '`true` cuando el handshake mTLS y la consulta de RUC fueron aceptados por SIFEN.'
+        environment:
+          type: string
+          enum:
+          - test
+          - prod
+        host:
+          type:
+          - string
+          - 'null'
+        own_ruc:
+          type: string
+        checked_at:
+          type: string
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/SifenDiagnoseStep'
+        tls:
+          type: object
+          properties:
+            ok:
+              type: boolean
+            http_status:
+              type: integer
+        auth:
+          type: object
+          properties:
+            accepted:
+              type: boolean
+            sifen_code:
+              type: string
+            sifen_message:
+              type: string
+        ruc:
+          type:
+          - object
+          - 'null'
+          properties:
+            found:
+              type: boolean
+            name:
+              type:
+              - string
+              - 'null'
+            status:
+              type:
+              - string
+              - 'null'
+        latency_ms:
+          type:
+          - integer
+          - 'null'
+        actions:
+          type: array
+          items:
+            type: string
+          description: Qué corregir si algo falló.
+    SifenVerifyCajaRequest:
+      type: object
+      properties:
+        establecimiento:
+          type: string
+          example: '001'
+        punto_expedicion:
+          type: string
+          example: '002'
+        sales_point_id:
+          type: string
+          description: 'Alternativa a `establecimiento` + `punto_expedicion`: la caja SIFEN con su numeración.'
+        tipo_de:
+          type: integer
+          default: 1
+        check_ruc:
+          type: boolean
+          default: true
+          description: '`false` omite la consulta del RUC emisor a SIFEN.'
+    SifenVerifyCajaCheck:
+      type: object
+      properties:
+        code:
+          type: string
+          example: certificate_ruc_mismatch
+        ok:
+          type: boolean
+        severity:
+          type: string
+          enum:
+          - error
+          - warning
+          - info
+          description: '`error` bloquea la emisión; `warning` no pudo verificarse o vence pronto.'
+        message:
+          type: string
+        action:
+          type:
+          - string
+          - 'null'
+          description: Cómo corregirlo (ruta de la API).
+    SifenVerifyCaja:
+      type: object
+      properties:
+        valid:
+          type: boolean
+          description: '`true` cuando ningún chequeo es de severidad `error`.'
+        environment:
+          type: string
+          enum:
+          - test
+          - prod
+        tipo_de:
+          type: integer
+        caja:
+          type:
+          - object
+          - 'null'
+          properties:
+            establecimiento:
+              type: string
+            punto_expedicion:
+              type: string
+        timbrado:
+          type:
+          - string
+          - 'null'
+        checks:
+          type: array
+          items:
+            $ref: '#/components/schemas/SifenVerifyCajaCheck'
+        actions:
+          type: array
+          items:
+            type: string
+    SifenLote:
+      type: object
+      properties:
+        protocol:
+          type: string
+          example: '987654321'
+        environment:
+          type: string
+          enum:
+          - test
+          - prod
+        state:
+          type: string
+          enum:
+          - in_process
+          - concluded
+          - expired
+          - not_found_or_other
+        sifen:
+          type: object
+          properties:
+            code:
+              type: string
+              example: '0362'
+            message:
+              type: string
+        documents:
+          type: array
+          items:
+            type: object
+            properties:
+              cdc:
+                type: string
+              sifen_status:
+                type:
+                - string
+                - 'null'
+              code:
+                type: string
+              message:
+                type: string
+              protocol:
+                type:
+                - string
+                - 'null'
+              local_status:
+                type:
+                - string
+                - 'null'
+        local_documents:
+          type: array
+          items:
+            type: object
+            properties:
+              cdc:
+                type: string
+              status:
+                type: string
+    SifenTypeEntry:
+      type: object
+      properties:
+        code:
+          type: integer
+          enum:
+          - 1
+          - 4
+          - 5
+          - 6
+          - 7
+        description:
+          type: string
+          example: Factura electrónica
+        issuable_via_api:
+          type: boolean
+        issuable_standalone:
+          type: boolean
+        contexts:
+          type: object
+          additionalProperties:
+            type: string
+          description: Contexto (`sale`, `standalone`, `credit_note`, `debit_note`) -> la ruta que lo
+            emite.
+        needs_associated_document:
+          type: boolean
+    SifenTypes:
+      type: object
+      properties:
+        types:
+          type: array
+          items:
+            $ref: '#/components/schemas/SifenTypeEntry'
+        issuable:
+          type: array
+          items:
+            type: integer
+          example:
+          - 1
+          - 5
+          - 6
+        default:
+          type: integer
+          example: 1
+    SifenValidateTypeRequest:
+      type: object
+      required:
+      - tipo_de
+      properties:
+        tipo_de:
+          type: integer
+          example: 1
+        context:
+          type: string
+          enum:
+          - sale
+          - standalone
+          - credit_note
+          - debit_note
+          description: Omitido = en cualquier contexto.
+    SifenValidateType:
+      type: object
+      properties:
+        tipo_de:
+          type: integer
+        valid:
+          type: boolean
+          description: '`false` cuando no es un código de tipo de documento de SIFEN.'
+        issuable:
+          type: boolean
+        description:
+          type:
+          - string
+          - 'null'
+        context:
+          type:
+          - string
+          - 'null'
+        reason:
+          type:
+          - string
+          - 'null'
+          description: Por qué no se puede emitir (null cuando sí).
+        routes:
+          type: object
+          additionalProperties:
+            type: string
+    SifenTotalsPreview:
+      type: object
+      description: 'Bloque `sifen` de `POST /sales/totals-preview/` en cuentas/cajas que resuelven a SIFEN:
+        lo que declararía el DE, calculado con las funciones del emisor.'
+      properties:
+        system:
+          type: string
+          enum:
+          - sifen
+        valid:
+          type: boolean
+          description: '`false` cuando el carrito trae una alícuota que SIFEN no declara (solo 10, 5,
+            exento).'
+        currency:
+          type: string
+          enum:
+          - PYG
+        buckets:
+          type: object
+          properties:
+            '10':
+              type: object
+              properties:
+                gross:
+                  type: integer
+                base:
+                  type: integer
+                iva:
+                  type: integer
+            '5':
+              type: object
+              properties:
+                gross:
+                  type: integer
+                base:
+                  type: integer
+                iva:
+                  type: integer
+            exento:
+              type: object
+              properties:
+                gross:
+                  type: integer
+                base:
+                  type: integer
+                iva:
+                  type: integer
+        total_operacion:
+          type: integer
+        redondeo:
+          type: integer
+          description: '`dRedon`: redondeo de 50 Gs cuando el emisor lo aplica.'
+        total_iva:
+          type: integer
+        total_general:
+          type: integer
+          description: '`dTotGralOpe`.'
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: sifen_totals_error
+            message:
+              type: string
+    PartnerError:
+      allOf:
+      - $ref: '#/components/schemas/Error'
+      type: object
+      properties:
+        error_code:
+          type: string
+          description: Código estable de la cuenta partner (ver tabla de errores de la guía).
+          example: API_PARTNER_REQUIRED
+          enum:
+          - API_PARTNER_REQUIRED
+          - API_PARTNER_NOT_FOUND
+          - API_PARTNER_TAXPAYER_NOT_FOUND
+          - API_PARTNER_TAXPAYER_CUIT_INVALID
+          - API_PARTNER_TAXPAYER_DUPLICATE
+          - API_PARTNER_TAXPAYER_IS_PRIMARY
+          - API_PARTNER_TAXPAYER_CUIT_CLAIMED
+          - API_PARTNER_NOTE_ISSUER_CLAIMED_ELSEWHERE
+          - API_PARTNER_NOTE_ISSUER_DELEGATION_MISSING
+    PartnerTaxpayerCreateRequest:
+      type: object
+      required:
+      - tax_id
+      properties:
+        tax_id:
+          type: string
+          description: CUIT de 11 dígitos con dígito verificador válido (se aceptan guiones). También
+            se acepta como `cuit` o `numero_documento`.
+          example: '20111111112'
+        tax_condition:
+          type: string
+          description: Condición frente al IVA del usuario final.
+          example: monotributo
+        punto_venta:
+          type: string
+          description: Punto de venta habilitado para WSFE.
+          example: '2'
+        business_name:
+          type: string
+          description: Razón social.
+          example: Cliente SA
+      additionalProperties: true
+    PartnerTaxpayer:
+      type: object
+      description: CUIT de un usuario final. `id` es el `taxpayer_id` para facturar.
+      properties:
+        id:
+          type: string
+          example: 6650f2c1a1b2c3d4e5f60718
+        tax_id:
+          type: string
+          example: '20111111112'
+        business_name:
+          type: string
+          example: Cliente SA
+        tax_condition:
+          type: string
+          example: monotributo
+        punto_venta:
+          type:
+          - string
+          - 'null'
+          example: '2'
+        default_invoice_type:
+          type: string
+          example: C
+        delegation_verified:
+          type: boolean
+          description: Si ARCA confirmó la delegación WSFE.
+          example: false
+        delegation_verified_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        afip_environment:
+          type: string
+          example: production
+      additionalProperties: true
+    PartnerTaxpayerPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PartnerTaxpayer'
+        count:
+          type: integer
+          description: Cantidad de ítems de esta página.
+        next_cursor:
+          type:
+          - string
+          - 'null'
+          description: Cursor de la página siguiente; `null` en la última.
+    PartnerDelegationResult:
+      type: object
+      properties:
+        taxpayer_id:
+          type: string
+        cuit:
+          type: string
+        delegation_verified:
+          type:
+          - boolean
+          - 'null'
+          description: '`true` delegado, `false` falta delegar, `null` ARCA no contestó.'
+        platform_cuit:
+          type: string
+          description: CUIT de YoFacturo al que el usuario final debe delegar WSFE.
+        enabled_sales_points:
+          type: array
+          description: Puntos de venta habilitados (solo si está verificada).
+          items:
+            type: object
+            additionalProperties: true
+        afip_error:
+          type: string
+          description: Motivo informado por ARCA (si no está verificada o no contestó).
+    PartnerUsage:
+      type: object
+      properties:
+        period_start:
+          type: string
+          format: date-time
+        period_end:
+          type: string
+          format: date-time
+        active_cuits_count:
+          type: integer
+          description: CUIT con al menos un comprobante autorizado con CAE real en el período.
+        active_cuits:
+          type: array
+          items:
+            type: string
+        active_cuits_overflow:
+          type: integer
+          description: CUIT activos que no entran en `active_cuits`.
+        extra_cuits:
+          type: integer
+          description: CUIT activos por encima de `included_cuits`.
+        estimate_ars:
+          type: string
+          description: Estimado del período en pesos enteros (string).
+        included_cuits:
+          type: integer
+        base_price_ars:
+          type: string
+        extra_cuit_price_ars:
+          type: string
+    SaleFx:
+      type: object
+      description: 'Cotización oficial ARCA con la que se fijó una venta o presupuesto en moneda extranjera.
+        Solo existe cuando la moneda del documento NO es la moneda por defecto de la cuenta (una venta
+        en pesos no trae `fx`). La calcula el servidor: el valor que mande el cliente se ignora.'
+      properties:
+        rate:
+          type: string
+          example: '1000.50'
+          description: Pesos por unidad de moneda extranjera (decimal como texto).
+        rate_date:
+          type: string
+          format: date
+          example: '2026-10-12'
+        source:
+          type: string
+          example: arca
+        monid:
+          type: string
+          example: DOL
+          description: Código de moneda ARCA (DOL = dólar estadounidense).
+        environment:
+          type: string
+          enum:
+          - production
+          - homologation
+    WebhookEndpointUpdate:
+      type: object
+      description: 'Edición parcial: solo cambian los campos enviados. El secreto de firma no se edita
+        acá (ver `rotate-secret`).'
+      properties:
+        url:
+          type: string
+          format: uri
+          description: Nueva URL http(s) pública; pasa por la misma protección SSRF que el alta.
+        events:
+          type: array
+          minItems: 1
+          items:
+            type: string
+          description: Reemplaza la lista de event_type suscriptos (ver GET /webhooks/events).
+        description:
+          type: string
+        is_active:
+          type: boolean
+          description: '`false` pausa el endpoint (deja de recibir eventos); reactivarlo cuenta contra
+            el tope de endpoints activos.'

@@ -19,7 +19,14 @@ from .errors import (
     YoFacturoError,
 )
 
+from . import webhooks
+from .client import ENVIRONMENTS, SANDBOX_KEY_PREFIX, is_sandbox_key
+
 __all__ = [
+    "webhooks",
+    "is_sandbox_key",
+    "SANDBOX_KEY_PREFIX",
+    "ENVIRONMENTS",
     "YoFacturo",
     "DEFAULT_BASE_URL",
     "YoFacturoError",

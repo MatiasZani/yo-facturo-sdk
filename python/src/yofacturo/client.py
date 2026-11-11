@@ -17,12 +17,25 @@ from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
 from ._version import __version__
 from .errors import YoFacturoError, error_from_response
+from .resources.appointments import AppointmentsResource
 from .resources.customers import CustomersResource
 from .resources.invoices import InvoicesResource
+from .resources.partner import PartnerResource
 from .resources.products import ProductsResource
+from .resources.rentals import RentalsResource
 from .resources.sales import SalesResource
+from .resources.services import ServicesResource
+from .resources.sifen import SifenResource
+from .resources.subscription_plans import SubscriptionPlansResource
 
 DEFAULT_BASE_URL = "https://api.yo-facturo.com/api/v1"
+SANDBOX_KEY_PREFIX = "yf_test_"
+ENVIRONMENTS = ("testing", "production")
+
+
+def is_sandbox_key(api_key: Optional[str]) -> bool:
+    """True si el token es de sandbox (`yf_test_...`): CAE sintético, sin ARCA real."""
+    return bool(api_key) and str(api_key).startswith(SANDBOX_KEY_PREFIX)
 
 # (method, url, headers, body, timeout) -> (status_code, headers, raw_body)
 Transport = Callable[[str, str, Mapping[str, str], Optional[bytes], float], Tuple[int, Mapping[str, str], bytes]]
@@ -97,6 +110,9 @@ class YoFacturo:
             (con backoff exponencial). 0 desactiva los reintentos.
         transport: función de transporte HTTP; se usa la real (`urllib`) por
             defecto. Pensado para inyectar un doble de prueba en tests.
+        environment: `"testing"` o `"production"`. Si se pasa, se agrega
+            `"ambiente"` a cada body JSON que no lo traiga. Con un token
+            `yf_test_` (sandbox) no hace falta.
         sleep: función usada para esperar entre reintentos (por defecto
             `time.sleep`); inyectable para que los tests no esperen de verdad.
     """
@@ -110,9 +126,15 @@ class YoFacturo:
         max_retries: int = 3,
         transport: Optional[Transport] = None,
         sleep: Optional[Callable[[float], None]] = None,
+        environment: Optional[str] = None,
     ) -> None:
         if not api_key:
             raise ValueError("api_key es obligatorio")
+        if environment is not None and environment not in ENVIRONMENTS:
+            raise ValueError("environment debe ser 'testing' o 'production'")
+        #: si se define, se manda como `"ambiente"` en los bodies JSON (homologación ARCA
+        #: con un token live: `environment="testing"`). La API asume "production" si falta.
+        self.environment = environment
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
@@ -124,6 +146,17 @@ class YoFacturo:
         self.customers = CustomersResource(self)
         self.products = ProductsResource(self)
         self.sales = SalesResource(self)
+        self.services = ServicesResource(self)
+        self.rentals = RentalsResource(self)
+        self.appointments = AppointmentsResource(self)
+        self.subscription_plans = SubscriptionPlansResource(self)
+        self.sifen = SifenResource(self)
+        self.partner = PartnerResource(self)
+
+    @property
+    def is_sandbox(self) -> bool:
+        """True si el token es `yf_test_...` (sandbox)."""
+        return is_sandbox_key(self.api_key)
 
     # -- verbos HTTP -----------------------------------------------------
 
@@ -178,6 +211,8 @@ class YoFacturo:
             headers.update(extra_headers)
         body_bytes: Optional[bytes] = None
         if json_body is not None:
+            if self.environment and "ambiente" not in json_body:
+                json_body = {**json_body, "ambiente": self.environment}
             body_bytes = _json.dumps(json_body).encode("utf-8")
             headers["Content-Type"] = "application/json"
 

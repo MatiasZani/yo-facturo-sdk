@@ -140,5 +140,139 @@
       "porcentaje_aplicar": 50, "motivo": "Devolución parcial de mercadería"
     }},
     "expect": {"importe_total": "1210.00"}
+  },
+  "_partner_examples": {
+    "_comment": "Documentation-only (no runner posts these: partner endpoints need a registered partner account). Keys mirror openapi.json schemas Partner* / InvoiceCreateRequest.taxpayer_id; checked by a schema-keys script when P12c was written. Underscore prefix keeps both contract tests skipping this entry.",
+    "register_taxpayer": {
+      "request": "POST /partner/taxpayers/",
+      "body": {
+        "tax_id": "20111111112",
+        "tax_condition": "monotributo",
+        "punto_venta": "2",
+        "business_name": "Cliente SA"
+      },
+      "sdk": {
+        "call": "partner.create_taxpayer",
+        "args": [
+          "20111111112"
+        ],
+        "kwargs": {
+          "tax_condition": "monotributo",
+          "punto_venta": "2",
+          "business_name": "Cliente SA"
+        }
+      },
+      "response": {
+        "id": "6650f2c1a1b2c3d4e5f60718",
+        "tax_id": "20111111112",
+        "business_name": "Cliente SA",
+        "tax_condition": "monotributo",
+        "punto_venta": "2",
+        "default_invoice_type": "C",
+        "delegation_verified": false,
+        "delegation_verified_at": null,
+        "afip_environment": "production"
+      }
+    },
+    "list_taxpayers": {
+      "request": "GET /partner/taxpayers/?limit=100&q=cliente",
+      "sdk": {
+        "call": "partner.list_taxpayers",
+        "args": [],
+        "kwargs": {
+          "limit": 100,
+          "q": "cliente"
+        }
+      },
+      "response": {
+        "items": [
+          {
+            "id": "6650f2c1a1b2c3d4e5f60718",
+            "tax_id": "20111111112",
+            "business_name": "Cliente SA",
+            "tax_condition": "monotributo",
+            "punto_venta": "2",
+            "default_invoice_type": "C",
+            "delegation_verified": true,
+            "afip_environment": "production"
+          }
+        ],
+        "count": 1,
+        "next_cursor": null
+      }
+    },
+    "verify_delegation": {
+      "request": "POST /partner/taxpayers/6650f2c1a1b2c3d4e5f60718/verify-delegation/",
+      "sdk": {
+        "call": "partner.verify_delegation",
+        "args": [
+          "6650f2c1a1b2c3d4e5f60718"
+        ],
+        "kwargs": {}
+      },
+      "response": {
+        "taxpayer_id": "6650f2c1a1b2c3d4e5f60718",
+        "cuit": "20111111112",
+        "delegation_verified": false,
+        "platform_cuit": "<YoFacturo CUIT>",
+        "afip_error": "Falta delegar el servicio WSFE"
+      }
+    },
+    "usage": {
+      "request": "GET /partner/usage/",
+      "sdk": {
+        "call": "partner.usage",
+        "args": [],
+        "kwargs": {}
+      },
+      "response": {
+        "period_start": "2026-10-01T00:00:00-03:00",
+        "period_end": "2026-11-01T00:00:00-03:00",
+        "active_cuits_count": 12,
+        "active_cuits": [
+          "20111111112"
+        ],
+        "active_cuits_overflow": 11,
+        "extra_cuits": 2,
+        "estimate_ars": "150000",
+        "included_cuits": 10,
+        "base_price_ars": "100000",
+        "extra_cuit_price_ars": "25000"
+      }
+    },
+    "invoice_with_taxpayer_id": {
+      "request": "POST /bill/receipts/invoice/",
+      "body": {
+        "taxpayer_id": "6650f2c1a1b2c3d4e5f60718",
+        "concepto": 1,
+        "tipo_documento": 99,
+        "numero_documento": "0",
+        "razon_social": "CONSUMIDOR FINAL",
+        "items": [
+          {
+            "descripcion": "Servicio de consultoría",
+            "cantidad": 1,
+            "precio_unitario": 15000.0
+          }
+        ]
+      },
+      "sdk": {
+        "call": "invoices.create",
+        "args": [],
+        "kwargs": {
+          "taxpayer_id": "6650f2c1a1b2c3d4e5f60718",
+          "tipo_documento": 99,
+          "numero_documento": "0",
+          "razon_social": "CONSUMIDOR FINAL",
+          "items": [
+            {
+              "descripcion": "Servicio de consultoría",
+              "cantidad": 1,
+              "precio_unitario": 15000.0
+            }
+          ]
+        }
+      }
+    }
   }
 }

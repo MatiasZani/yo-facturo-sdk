@@ -49,8 +49,10 @@ $nota = $client->invoices->creditNote(
 
 - `$client->invoices` — comprobantes AFIP/ARCA: `create`, `createForCustomer`, `creditNote`, `debitNote`, `list`, `get`, `authorize`, `cancel`, `supportedTypes`.
 - `$client->customers` — `list`, `get`, `create`, `update`, `delete`.
-- `$client->products` — `list`, `get`, `create`, `update`, `delete`.
+- `$client->products` — `list`, `get`, `create`, `update`, `delete`. `list` envía `currency_aware=1` por defecto (productos con `price_currency` en otra moneda, ej. USD; `['currency_aware' => false]` lo desactiva); al vender esos productos mandá `currency` en `sales->create`.
 - `$client->sales` — `list`, `get`, `create`, `update`, `delete`.
+- `$client->services`, `$client->rentals` — `list`, `get`, `create`, `update`, `delete` (scopes `services:*` / `rentals:*`). `list` envía `currency_aware=1` por defecto, igual que `products` (`['currency_aware' => false]` lo desactiva).
+- `$client->appointments`, `$client->subscriptionPlans` — `list`, `get`, `create`, `update`, `delete` (scopes `appointments:*` / `recurring:*`).
 
 ## Manejo de errores
 

@@ -5,6 +5,32 @@ Todos los cambios notables de este proyecto se documentan en este archivo.
 El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/),
 y este proyecto adhiere a [Semantic Versioning](https://semver.org/lang/es/).
 
+## [Sin publicar]
+
+### Agregado
+
+- **Servicios, alquileres, turnos y planes de suscripción:** recursos `services`, `rentals`, `appointments` y `subscription_plans` / `subscriptionPlans` en los tres SDKs (Python, Node.js, PHP), con el mismo CRUD que `products` (`list`, `get`, `create`, `update`, `delete`). `services.list` y `rentals.list` mandan `currency_aware=1` por defecto (igual que `products.list`). Scopes: `services:*`, `rentals:*`, `appointments:*` y `recurring:*`.
+
+- **Productos y ventas en moneda extranjera (USD):** un producto puede tener `price_currency` (ej. `"USD"`; omitido = moneda por defecto de la cuenta) y una venta o presupuesto con esos productos debe mandar `currency` con la misma moneda. Sin `currency` la API responde 422 `CURRENCY_REQUIRED`, con monedas mezcladas 422 `MIXED_CURRENCY_CART`, y los demas errores traen `error_code` (`FOREIGN_CURRENCY_NOT_SUPPORTED`, `INVOICE_FX_RATE_*`, `SALE_TENDER_*`). La venta/presupuesto guarda `currency` y `fx` {rate, rate_date, source, monid, environment} (cotizacion oficial ARCA, calculada por el servidor); los cobros en pesos de una venta en dolares llevan `currency`/`tendered_amount`/`rate`. Las ventas en la moneda por defecto no cambian (no traen `currency` ni `fx`). **Importante para integraciones:** `GET /products/list/` (y `by-barcode`) omite ahora los productos en otra moneda salvo que mandes `currency_aware=1`; los tres SDKs (`products.list`) lo envian por defecto (`currency_aware=False` / `currency_aware: false` / `['currency_aware' => false]` para desactivarlo). La spec OpenAPI documenta `price_currency`, `currency`, `fx`, el parametro `currency_aware` y los `error_code`.
+
+- **Paraguay (SIFEN):** recurso `sifen` en los tres SDKs (Python, Node.js, PHP) con los mismos métodos: `list`, `get`, `query`, `events`, `void`, `debit_note[_preview]`, `inutilizar`, `kude`, `sale_kude`, `send_email`, `public_link`, `generate_invoice`, `credit_note[_preview]`, `receptor_event`, `readiness`, `set_environment`, `certificates`, `ruc`, `numbering`, `seed_numbering` y `catalogs`. Además: `create` (factura sin venta, `POST /bill/sifen/documents/`), `diagnose` (sonda de conectividad mTLS), `verify_caja`, `lote` (consulta en vivo de un lote), `types` y `validate_type`; `POST /sales/totals-preview/` devuelve el bloque `sifen` (IVA 10/5/exento, redondeo, total) en cuentas de Paraguay, y una alícuota que SIFEN no admite en una venta con factura responde 400. La spec OpenAPI y la colección de Postman incluyen la carpeta «Facturación Paraguay».
+
+- **Cuentas API partner:** recurso `partner` en los tres SDKs (Python, Node.js, PHP) para las cuentas con contrato partner (`/partner`): `create_taxpayer`, `list_taxpayers`, `get_taxpayer`, `remove_taxpayer`, `verify_delegation` y `usage` (Node/PHP: `createTaxpayer`, etc.). Se factura en nombre de cada CUIT registrado pasando `taxpayer_id` a `invoices.create`. La spec OpenAPI documenta el tag «Cuentas API partner», el campo `taxpayer_id` y los `error_code` `API_PARTNER_*`.
+
+## [0.3.0] - 2026-10-13
+
+### Agregado
+
+- **Webhooks:** `webhooks.verify_signature` / `construct_event` (Python) y `webhooks.verifySignature` / `constructEvent` (Node) validan `X-YF-Signature` (`t=<ts>,v1=HMAC_SHA256(secret, "<ts>.<body crudo>")`, tolerancia 300 s). Eventos `invoice.rejected` / `invoice.cancelled` documentados en la spec.
+- **Sandbox y ambiente:** `is_sandbox_key` / `client.is_sandbox` (tokens `yf_test_`) y parametro `environment="testing"` que agrega `"ambiente"` a los bodies.
+- **`invoices.link(id)`** (`POST /bill/receipts/{id}/public-link/`) en Python y Node; `idempotency_key` ya soportado en `invoices.create`.
+- **CLI `yofacturo` (Python):** `login`, `invoice create|get|link`, `webhooks verify`; salida JSON y exit code distinto de 0 ante fallos. Extra opcional `yofacturo[keyring]`.
+- Spec OpenAPI sincronizada con la API (webhooks `test`/`rotate-secret`, `public-link`, `afip-environment`, `credit-note/preview`).
+
+### Cambiado
+
+- URLs de `Source`/`Homepage` corregidas (`github.com/MatiasZani/yo-facturo-sdk`, `yo-facturo.com/dev/`).
+
 ## [0.2.0] - 2026-10-05
 
 La facturación por API ahora usa la misma lógica que el POS y que el panel:

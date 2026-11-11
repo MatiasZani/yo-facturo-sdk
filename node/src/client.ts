@@ -7,13 +7,27 @@
  */
 
 import { InvoicesResource } from "./resources/invoices";
+import { SifenResource } from "./resources/sifen";
+import { PartnerResource } from "./resources/partner";
 import { CustomersResource } from "./resources/customers";
+import { AppointmentsResource } from "./resources/appointments";
 import { ProductsResource } from "./resources/products";
+import { RentalsResource } from "./resources/rentals";
+import { ServicesResource } from "./resources/services";
+import { SubscriptionPlansResource } from "./resources/subscription-plans";
 import { SalesResource } from "./resources/sales";
 import { errorFromResponse, YoFacturoError } from "./errors";
 
 export const DEFAULT_BASE_URL = "https://api.yo-facturo.com/api/v1";
-export const VERSION = "0.2.0";
+export const VERSION = "0.3.0";
+export const SANDBOX_KEY_PREFIX = "yf_test_";
+export const ENVIRONMENTS = ["testing", "production"] as const;
+export type Environment = (typeof ENVIRONMENTS)[number];
+
+/** true si el token es de sandbox (`yf_test_...`): CAE sintético, sin ARCA real. */
+export function isSandboxKey(apiKey?: string | null): boolean {
+  return !!apiKey && apiKey.startsWith(SANDBOX_KEY_PREFIX);
+}
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
@@ -42,6 +56,11 @@ export interface YoFacturoOptions {
   transport?: Transport;
   /** Función de espera entre reintentos (para tests). Por defecto `setTimeout`. */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * `"testing"` o `"production"`. Si se pasa, se agrega `"ambiente"` a cada body JSON
+   * que no lo traiga (homologación ARCA con un token live). Con `yf_test_` no hace falta.
+   */
+  environment?: Environment;
 }
 
 interface RequestOptions {
@@ -127,13 +146,20 @@ export class YoFacturo {
   readonly baseUrl: string;
   readonly timeout: number;
   readonly maxRetries: number;
+  readonly environment?: Environment;
   private readonly transport: Transport;
   private readonly sleep: (ms: number) => Promise<void>;
 
   readonly invoices: InvoicesResource;
   readonly customers: CustomersResource;
   readonly products: ProductsResource;
+  readonly services: ServicesResource;
+  readonly rentals: RentalsResource;
+  readonly appointments: AppointmentsResource;
+  readonly subscriptionPlans: SubscriptionPlansResource;
   readonly sales: SalesResource;
+  readonly sifen: SifenResource;
+  readonly partner: PartnerResource;
 
   constructor(apiKey: string, options: YoFacturoOptions = {}) {
     if (!apiKey) {
@@ -143,13 +169,28 @@ export class YoFacturo {
     this.baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
     this.timeout = options.timeout ?? 30;
     this.maxRetries = options.maxRetries ?? 3;
+    if (options.environment !== undefined && !ENVIRONMENTS.includes(options.environment)) {
+      throw new Error("environment debe ser 'testing' o 'production'");
+    }
+    this.environment = options.environment;
     this.transport = options.transport ?? defaultTransport;
     this.sleep = options.sleep ?? defaultSleep;
 
     this.invoices = new InvoicesResource(this);
     this.customers = new CustomersResource(this);
     this.products = new ProductsResource(this);
+    this.services = new ServicesResource(this);
+    this.rentals = new RentalsResource(this);
+    this.appointments = new AppointmentsResource(this);
+    this.subscriptionPlans = new SubscriptionPlansResource(this);
     this.sales = new SalesResource(this);
+    this.sifen = new SifenResource(this);
+    this.partner = new PartnerResource(this);
+  }
+
+  /** true si el token es `yf_test_...` (sandbox). */
+  get isSandbox(): boolean {
+    return isSandboxKey(this.apiKey);
   }
 
   get<T = any>(path: string, params?: Record<string, unknown>): Promise<T> {
@@ -181,7 +222,11 @@ export class YoFacturo {
   }
 
   async request<T = any>(method: HttpMethod, path: string, options: RequestOptions = {}): Promise<T> {
-    const { params, jsonBody, extraHeaders } = options;
+    const { params, extraHeaders } = options;
+    let jsonBody = options.jsonBody;
+    if (jsonBody !== undefined && this.environment && !("ambiente" in jsonBody)) {
+      jsonBody = { ...jsonBody, ambiente: this.environment };
+    }
     const url = this.buildUrl(path, params);
     const headers: Record<string, string> = {
       "X-API-Key": this.apiKey,

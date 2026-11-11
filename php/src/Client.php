@@ -14,10 +14,16 @@ use YoFacturo\Exceptions\ScopeException;
 use YoFacturo\Exceptions\ServerException;
 use YoFacturo\Exceptions\ValidationException;
 use YoFacturo\Exceptions\YoFacturoException;
+use YoFacturo\Resources\AppointmentsResource;
 use YoFacturo\Resources\CustomersResource;
 use YoFacturo\Resources\InvoicesResource;
 use YoFacturo\Resources\ProductsResource;
 use YoFacturo\Resources\SalesResource;
+use YoFacturo\Resources\PartnerResource;
+use YoFacturo\Resources\RentalsResource;
+use YoFacturo\Resources\ServicesResource;
+use YoFacturo\Resources\SifenResource;
+use YoFacturo\Resources\SubscriptionPlansResource;
 
 /**
  * Cliente principal del SDK de YoFacturo.
@@ -46,6 +52,12 @@ class Client
     public CustomersResource $customers;
     public ProductsResource $products;
     public SalesResource $sales;
+    public ServicesResource $services;
+    public RentalsResource $rentals;
+    public AppointmentsResource $appointments;
+    public SubscriptionPlansResource $subscriptionPlans;
+    public SifenResource $sifen;
+    public PartnerResource $partner;
 
     /**
      * @param string $apiKey token `yf_live_...` (o `yf_test_...` para sandbox), generado
@@ -85,6 +97,12 @@ class Client
         $this->customers = new CustomersResource($this);
         $this->products = new ProductsResource($this);
         $this->sales = new SalesResource($this);
+        $this->services = new ServicesResource($this);
+        $this->rentals = new RentalsResource($this);
+        $this->appointments = new AppointmentsResource($this);
+        $this->subscriptionPlans = new SubscriptionPlansResource($this);
+        $this->sifen = new SifenResource($this);
+        $this->partner = new PartnerResource($this);
     }
 
     /**

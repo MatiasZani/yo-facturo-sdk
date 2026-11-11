@@ -141,6 +141,13 @@ class InvoicesResource:
         """Obtiene un comprobante por su id -- `GET /bill/receipts/{id}/`."""
         return self._client.get(f"{_BASE}/{comprobante_id}/")
 
+    def link(self, comprobante_id: str) -> Any:
+        """Link público firmado para compartir el comprobante (PDF/HTML) sin login.
+
+        `POST /bill/receipts/{id}/public-link/`. El comprobante debe estar aprobado.
+        """
+        return self._client.post(f"{_BASE}/{comprobante_id}/public-link/", json_body={})
+
     def authorize(self, comprobante_id: str) -> Any:
         """Autoriza un comprobante en borrador ante AFIP (obtiene el CAE).
 

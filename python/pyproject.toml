@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "yofacturo"
-version = "0.2.0"
+version = "0.3.0"
 description = "SDK oficial de Python para la API de YoFacturo (facturación electrónica ARCA/AFIP para Argentina)"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -29,12 +29,16 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
+keyring = ["keyring>=24"]
+
+[project.scripts]
+yofacturo = "yofacturo.cli:main"
 
 [project.urls]
-Homepage = "https://yo-facturo.com"
+Homepage = "https://yo-facturo.com/dev/"
 Documentation = "https://yo-facturo.com/dev/"
 "API Spec" = "https://api.yo-facturo.com/api/v1/openapi.json"
-Source = "https://github.com/yofacturo/yofacturo-sdk"
+Source = "https://github.com/MatiasZani/yo-facturo-sdk"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -2439,6 +2439,39 @@
             "description": "Requiere scope `sales:write`."
           },
           "response": []
+        },
+        {
+          "name": "Calcular los totales de una venta sin guardarla",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sales/totals-preview",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sales",
+                "totals-preview"
+              ]
+            },
+            "description": "Totales con los que se guardaría la venta (mismo cuerpo que `POST /sales/`): subtotal, ajustes, `vat_breakdown`, redondeo y `total`. Si el sistema que factura la venta resuelve a SIFEN (cuenta o caja de Paraguay), la respuesta agrega `sifen`: los importes por alícuota (10 / 5 / exento) en guaraníes, el redondeo de 50 Gs (`dRedon`) y el total del documento, con las mismas funciones que firma el emisor; un carrito con una alícuota que SIFEN no admite responde `sifen.valid: false` (no falla). Una cuenta AFIP recibe exactamente la respuesta de siempre. No guarda nada. Requiere scope `sales:write`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"publication_id\": \"{{product_id}}\",\n      \"publication_type\": \"product\",\n      \"quantity\": 1\n    }\n  ],\n  \"customer\": \"no-customer\",\n  \"payment\": {\n    \"method\": \"cash\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
         }
       ]
     },
@@ -2595,6 +2628,40 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"punto_venta\": 1,\n  \"concepto\": 1,\n  \"tipo_documento\": 99,\n  \"numero_documento\": \"0\",\n  \"razon_social\": \"CONSUMIDOR FINAL\",\n  \"condicion_iva_receptor_id\": 5,\n  \"items\": [\n    {\n      \"descripcion\": \"Servicio de consultoría\",\n      \"cantidad\": 1,\n      \"precio_unitario\": 15000.0,\n      \"iva_id\": 5\n    }\n  ],\n  \"autorizar\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Emitir factura para un CUIT registrado (partner)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/bill/receipts/invoice/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "receipts",
+                "invoice"
+              ]
+            },
+            "description": "Solo cuentas API partner: igual que «Emitir factura», con `taxpayer_id` (el `id` devuelto por `POST /partner/taxpayers/`). La letra, el punto de venta y el CUIT emisor salen de ese contribuyente; antes de emitir el usuario final debe haber delegado WSFE (ver «Verificar la delegación WSFE de un CUIT»). Las notas de crédito y débito no lo reciben: toman el emisor del comprobante original. Requiere scope `invoices:write`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"taxpayer_id\": \"6650f2c1a1b2c3d4e5f60718\",\n  \"punto_venta\": 1,\n  \"concepto\": 1,\n  \"tipo_documento\": 99,\n  \"numero_documento\": \"0\",\n  \"razon_social\": \"CONSUMIDOR FINAL\",\n  \"condicion_iva_receptor_id\": 5,\n  \"items\": [\n    {\n      \"descripcion\": \"Servicio de consultoría\",\n      \"cantidad\": 1,\n      \"precio_unitario\": 15000.0,\n      \"iva_id\": 5\n    }\n  ],\n  \"autorizar\": true\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -3080,6 +3147,1396 @@
               ]
             },
             "description": "Requiere scope `received_invoices:write`."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Facturación Paraguay (SIFEN)",
+      "description": "Documentos electrónicos (DE) de Paraguay ante la DNIT/SET (SIFEN): factura electrónica (FE), nota de crédito (NCE) y nota de débito (NDE), KuDE, cancelación e inutilización, eventos del receptor, onboarding (certificado, CSC, cajas) y webhooks. La emisión sale de `POST /sales/` (o `POST /sales/generate_invoice/{sale_id}/`): estas rutas leen, consultan y operan los documentos ya emitidos. Guía: https://yo-facturo.com/dev/paraguay-sifen/",
+      "item": [
+        {
+          "name": "Preparación para emitir (readiness)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/bill/sifen/readiness/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "sifen",
+                "readiness"
+              ]
+            },
+            "description": "¿Puede el tenant emitir un DE ahora? `can_invoice` + `blockers[]` (identidad, geografía, timbrado, certificado y CSC del ambiente activo, cajas) + `warnings[]` (vencimientos a 30 días). Local y barato: no llama a SIFEN ni a Vault. Con `yf_test_*` se evalúa contra el ambiente de pruebas. Requiere scope `accounting:read`."
+          },
+          "response": []
+        },
+        {
+          "name": "Consultar un RUC (siConsRUC)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/bill/sifen/ruc/:ruc/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "sifen",
+                "ruc",
+                ":ruc"
+              ],
+              "variable": [
+                {
+                  "key": "ruc",
+                  "value": "",
+                  "description": "id de ruc"
+                }
+              ]
+            },
+            "description": "Razón social, estado y DV de un RUC (`80069563` o `80069563-1`). El DV se verifica localmente primero: un DV errado devuelve 400 `dv_mismatch` sin llamar a SIFEN. Caché de 24 h. También sirve de sonda de conectividad: consultá tu propio RUC para probar certificado y alcance de SIFEN. 30 por minuto. `yf_test_*` consulta siempre sifen-test. Requiere scope `invoices:read`."
+          },
+          "response": []
+        },
+        {
+          "name": "Cambiar de ambiente (test/prod)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/bill/sifen/environment/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "sifen",
+                "environment"
+              ]
+            },
+            "description": "Cambia el ambiente SIFEN del contribuyente. Se rechaza con 409 y `error_code` (`certificate_missing`, `csc_missing`, `certificate_expired`, `certificate_not_yet_valid`, `sandbox_prod_forbidden`) si el ambiente destino no puede firmar. Idempotente, auditado. 10 por hora. Permiso del dueño del token: `configuration:fiscal:edit`. Requiere scope `accounting:write`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"environment\": \"test\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Último y próximo número de una secuencia",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/bill/sifen/numbering/?tipo_de=&timbrado=&est=&punExp=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "sifen",
+                "numbering"
+              ],
+              "query": [
+                {
+                  "key": "tipo_de",
+                  "value": "",
+                  "description": "",
+                  "disabled": true
+                },
+                {
+                  "key": "timbrado",
+                  "value": "",
+                  "description": "",
+                  "disabled": true
+                },
+                {
+                  "key": "est",
+                  "value": "",
+                  "description": "",
+                  "disabled": true
+                },
+                {
+                  "key": "punExp",
+                  "value": "",
+                  "description": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Último número entregado y próximo de una secuencia. Cada parámetro toma por defecto el del contribuyente. Requiere scope `invoices:read`."
+          },
+          "response": []
+        },
+        {
+          "name": "Continuar la numeración desde un número",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/bill/sifen/numbering/seed/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "sifen",
+                "numbering",
+                "seed"
+              ]
+            },
+            "description": "Fija el último número usado de una secuencia (migración desde otro sistema). Solo hacia arriba (409 `not_upward`), nunca por debajo de un documento ya emitido (409 `higher_number_in_use`); no se puede cambiar la serie (409 `serie_mismatch`). Una sola escritura condicional, auditada (`sifen_numbering_seed`). 20 por hora. Permiso del dueño: `configuration:fiscal:edit`. Requiere scope `accounting:write`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"last_used\": 120,\n  \"tipo_de\": 1,\n  \"est\": \"001\",\n  \"punExp\": \"001\",\n  \"dry_run\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Listar documentos SIFEN",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/bill/sifen/documents/?tipo_de=&status=&date_from=&date_to=&sale_id=&cdc=&caja=&est=&punExp=&limit=&cursor=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "sifen",
+                "documents"
+              ],
+              "query": [
+                {
+                  "key": "tipo_de",
+                  "value": "",
+                  "description": "",
+                  "disabled": true
+                },
+                {
+                  "key": "status",
+                  "value": "",
+                  "description": "Uno o varios estados separados por coma.",
+                  "disabled": true
+                },
+                {
+                  "key": "date_from",
+                  "value": "",
+                  "description": "ISO 8601 (fecha o fecha-hora).",
+                  "disabled": true
+                },
+                {
+                  "key": "date_to",
+                  "value": "",
+                  "description": "",
+                  "disabled": true
+                },
+                {
+                  "key": "sale_id",
+                  "value": "",
+                  "description": "",
+                  "disabled": true
+                },
+                {
+                  "key": "cdc",
+                  "value": "",
+                  "description": "",
+                  "disabled": true
+                },
+                {
+                  "key": "caja",
+                  "value": "",
+                  "description": "`<establecimiento>-<punto de expedición>`, p. ej. `001-002`.",
+                  "disabled": true
+                },
+                {
+                  "key": "est",
+                  "value": "",
+                  "description": "",
+                  "disabled": true
+                },
+                {
+                  "key": "punExp",
+                  "value": "",
+                  "description": "",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "",
+                  "description": "1 a 200 (default 50).",
+                  "disabled": true
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "description": "",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Documentos electrónicos del tenant, el más nuevo primero. Paginación por cursor: pasá `next_cursor` como `cursor`. Requiere scope `invoices:read`."
+          },
+          "response": []
+        },
+        {
+          "name": "Obtener un documento SIFEN",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/bill/sifen/documents/:cdc/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "sifen",
+                "documents",
+                ":cdc"
+              ],
+              "variable": [
+                {
+                  "key": "cdc",
+                  "value": "",
+                  "description": "id de cdc"
+                }
+              ]
+            },
+            "description": "Estado, número, timbrado, totales, QR, protocolo, `sifen_messages` (todos los `dCodRes`/`dMsgRes` que SIFEN contestó: el motivo de un rechazo) y eventos. Es el endpoint al que apunta el polling tras emitir (el estado final llega en `status`). Requiere scope `invoices:read`."
+          },
+          "response": []
+        },
+        {
+          "name": "Consultar el documento en SIFEN (siConsDE)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/bill/sifen/documents/:cdc/consulta/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "sifen",
+                "documents",
+                ":cdc",
+                "consulta"
+              ],
+              "variable": [
+                {
+                  "key": "cdc",
+                  "value": "",
+                  "description": "id de cdc"
+                }
+              ]
+            },
+            "description": "Pregunta en vivo a SIFEN por el CDC y actualiza el estado local si cambió (hallado => `approved`, con espejo en la venta y webhook, igual que el sondeo automático). Reenvía un documento solo si estaba en `unknown`. 30 por minuto. Un token `yf_test_*` recibe 409. Requiere scope `invoices:write`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Emitir una nota de débito electrónica (NDE)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/bill/sifen/documents/:cdc/debit-note/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "sifen",
+                "documents",
+                ":cdc",
+                "debit-note"
+              ],
+              "variable": [
+                {
+                  "key": "cdc",
+                  "value": "",
+                  "description": "id de cdc"
+                }
+              ]
+            },
+            "description": "Emite una NDE (iTiDE 6) asociada a la FE aprobada `{cdc}` (`gCamDEAsoc`). 409 hasta que la FE esté aprobada. Sin topes de monto (como la ND de AFIP). Si la venta es de cuenta corriente con cliente, el débito en cuenta corriente se registra cuando SIFEN aprueba la nota. Soporta `Idempotency-Key`. Permiso del dueño del token: `administration:invoices:create`. 15 cada 5 minutos. Un token `yf_test_*` recibe 409. Requiere scope `invoices:write`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"descripcion\": \"Ajuste de precio\",\n      \"importe\": 11000,\n      \"tasa_iva\": 10\n    }\n  ],\n  \"motivo\": 8,\n  \"reason\": \"Ajuste por diferencia de precio\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Previsualizar una nota de débito (NDE)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/bill/sifen/documents/:cdc/debit-note/preview/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "sifen",
+                "documents",
+                ":cdc",
+                "debit-note",
+                "preview"
+              ],
+              "variable": [
+                {
+                  "key": "cdc",
+                  "value": "",
+                  "description": "id de cdc"
+                }
+              ]
+            },
+            "description": "Calcula la NDE que firmaría `POST .../debit-note/` sobre la FE aprobada `{cdc}`: total y buckets de IVA. No escribe nada, no toma número ni certificado. Requiere scope `invoices:read`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"descripcion\": \"Ajuste de precio\",\n      \"importe\": 11000,\n      \"tasa_iva\": 10\n    }\n  ],\n  \"motivo\": 8\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Eventos de un documento SIFEN",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/bill/sifen/documents/:cdc/events/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "sifen",
+                "documents",
+                ":cdc",
+                "events"
+              ],
+              "variable": [
+                {
+                  "key": "cdc",
+                  "value": "",
+                  "description": "id de cdc"
+                }
+              ]
+            },
+            "description": "Cancelación, eventos del receptor y, si el número fue inutilizado, la inutilización que lo cubrió, del más viejo al más nuevo. Cada evento trae el código y mensaje de SIFEN. Requiere scope `invoices:read`."
+          },
+          "response": []
+        },
+        {
+          "name": "Crear un link público del KuDE",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/bill/sifen/documents/:cdc/public-link/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "sifen",
+                "documents",
+                ":cdc",
+                "public-link"
+              ],
+              "variable": [
+                {
+                  "key": "cdc",
+                  "value": "",
+                  "description": "id de cdc"
+                }
+              ]
+            },
+            "description": "Genera un token HMAC con vencimiento obligatorio (60 s a 30 días; default 7 días) para ver el KuDE sin login con `GET /public/sifen/kude/{token}/`. Se rechaza para documentos rechazados, stale, inutilizados o reservados. 60 por minuto. Requiere scope `invoices:read`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"expires_in_seconds\": 604800\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Enviar el KuDE por email",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/bill/sifen/documents/:cdc/send-email/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "sifen",
+                "documents",
+                ":cdc",
+                "send-email"
+              ],
+              "variable": [
+                {
+                  "key": "cdc",
+                  "value": "",
+                  "description": "id de cdc"
+                }
+              ]
+            },
+            "description": "Envía por email el link firmado del KuDE (vigencia 7 días) y la URL de consulta de la SET. `email` por defecto es el del cliente de la venta. 20 cada 5 minutos. Permiso del dueño: `administration:invoices:create`. Requiere scope `invoices:write`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"cliente@ejemplo.com.py\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Anular un documento SIFEN",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/bill/sifen/documents/:cdc/void/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "sifen",
+                "documents",
+                ":cdc",
+                "void"
+              ],
+              "variable": [
+                {
+                  "key": "cdc",
+                  "value": "",
+                  "description": "id de cdc"
+                }
+              ]
+            },
+            "description": "Camino de anulación según el estado: FE aprobada hace menos de 48 h => evento de cancelación; fuera de ventana => nota de crédito por el saldo; NCE/NDE => cancelación dentro de 168 h (después 409); número que nunca se aprobó => inutilización. Repetir es éxito (no reenvía). Soporta `Idempotency-Key`. El dueño del token necesita el permiso `administration:invoices:delete`. 20 por minuto. Requiere scope `invoices:write`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Anulación por error de carga\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "XML firmado del documento",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/bill/sifen/documents/:cdc/xml/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "sifen",
+                "documents",
+                ":cdc",
+                "xml"
+              ],
+              "variable": [
+                {
+                  "key": "cdc",
+                  "value": "",
+                  "description": "id de cdc"
+                }
+              ]
+            },
+            "description": "El XML firmado exactamente como se envió a SIFEN (`application/xml`). Requiere scope `invoices:read`."
+          },
+          "response": []
+        },
+        {
+          "name": "Inutilizar un rango de números",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/bill/sifen/inutilizaciones/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "sifen",
+                "inutilizaciones"
+              ]
+            },
+            "description": "Anula con un evento `rGeVeInu` un rango (hasta 1000) de números nunca usados de una secuencia (timbrado + establecimiento + punto + tipo [+ serie]). 409 si algún número tiene un documento utilizable (aprobado, enviado, firmado, cancelado o ya inutilizado) o todavía no fue entregado por el contador de numeración. Idempotente por (secuencia, rango). Permiso del dueño del token: `administration:invoices:delete`. 20 por minuto. Requiere scope `invoices:write`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tipo_de\": 1,\n  \"establecimiento\": \"001\",\n  \"punto_expedicion\": \"001\",\n  \"desde\": 15,\n  \"hasta\": 20,\n  \"reason\": \"Talonario extraviado\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Catálogos de códigos SIFEN",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/bill/sifen/catalogs/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "sifen",
+                "catalogs"
+              ]
+            },
+            "description": "Todas las listas de códigos que hacen falta para armar un pedido válido. Requiere scope `invoices:read`."
+          },
+          "response": []
+        },
+        {
+          "name": "Un catálogo SIFEN",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/bill/sifen/catalogs/:name/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "sifen",
+                "catalogs",
+                ":name"
+              ],
+              "variable": [
+                {
+                  "key": "name",
+                  "value": "",
+                  "description": "id de name"
+                }
+              ]
+            },
+            "description": "Uno de: `document_types`, `note_motives`, `receptor_id_types`, `iva_affectation`, `iva_rates`, `payment_types`. Requiere scope `invoices:read`."
+          },
+          "response": []
+        },
+        {
+          "name": "Estado de los certificados SIFEN",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/bill/tax_info/taxpayer/sifen/certificates/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "tax_info",
+                "taxpayer",
+                "sifen",
+                "certificates"
+              ]
+            },
+            "description": "Metadatos (nunca secretos) del certificado y CSC de `test` y `prod`: sujeto, vencimiento, huella, `expiring_soon` (30 días). Requiere scope `accounting:read`."
+          },
+          "response": []
+        },
+        {
+          "name": "Estado del certificado de un ambiente",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/bill/tax_info/taxpayer/sifen/certificates/:environment/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "tax_info",
+                "taxpayer",
+                "sifen",
+                "certificates",
+                ":environment"
+              ],
+              "variable": [
+                {
+                  "key": "environment",
+                  "value": "",
+                  "description": "id de environment"
+                }
+              ]
+            },
+            "description": "Igual que el listado, de un solo ambiente. Requiere scope `accounting:read`."
+          },
+          "response": []
+        },
+        {
+          "name": "Subir el certificado y el CSC",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/bill/tax_info/taxpayer/sifen/certificates/:environment/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "tax_info",
+                "taxpayer",
+                "sifen",
+                "certificates",
+                ":environment"
+              ],
+              "variable": [
+                {
+                  "key": "environment",
+                  "value": "",
+                  "description": "id de environment"
+                }
+              ]
+            },
+            "description": "Sube el PKCS#12 + contraseña + IdCSC/CSC del ambiente a Vault (`multipart/form-data`). 409 si ya hay uno (usá `PUT`). Requiere antes los datos fiscales de Paraguay con RUC y DV. Se valida el archivo en memoria (RSA >= 2048, clientAuth, clave que corresponde, vigente; certificados en hardware se rechazan). 10 por hora. Permiso del dueño: `configuration:fiscal:edit`. Requiere scope `accounting:write`.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                },
+                {
+                  "key": "password",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "csc_id",
+                  "value": "0001",
+                  "type": "text"
+                },
+                {
+                  "key": "csc",
+                  "value": "",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Reemplazar el certificado",
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/bill/tax_info/taxpayer/sifen/certificates/:environment/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "tax_info",
+                "taxpayer",
+                "sifen",
+                "certificates",
+                ":environment"
+              ],
+              "variable": [
+                {
+                  "key": "environment",
+                  "value": "",
+                  "description": "id de environment"
+                }
+              ]
+            },
+            "description": "Reemplaza el certificado de un ambiente ya configurado; `csc_id`/`csc` son opcionales (se conservan). 10 por hora. Requiere scope `accounting:write`.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                },
+                {
+                  "key": "password",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "csc_id",
+                  "value": "0001",
+                  "type": "text"
+                },
+                {
+                  "key": "csc",
+                  "value": "",
+                  "type": "text"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Registrar un evento del receptor",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/received_invoices/sifen/events/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "received_invoices",
+                "sifen",
+                "events"
+              ]
+            },
+            "description": "Si recibiste un DE de SIFEN, registrá notificación de recepción, conformidad, disconformidad o desconocimiento (o corregí uno con `correction_of`). Se firma con TU certificado. Ventana de 15 días desde la emisión y topes por tipo (SIFEN 4150/4152/4156/4200). 60 por minuto. Permiso del dueño: `accounting:received_invoices:edit`. Requiere scope `received_invoices:write`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kind\": \"conformidad\",\n  \"cdc\": \"01800695631001001000000112026100710000000013\",\n  \"total\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "KuDE de un documento por CDC",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/sales/sifen/documents/:cdc/kude/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sales",
+                "sifen",
+                "documents",
+                ":cdc",
+                "kude"
+              ],
+              "variable": [
+                {
+                  "key": "cdc",
+                  "value": "",
+                  "description": "id de cdc"
+                }
+              ]
+            },
+            "description": "Igual, por CDC: sirve para FE, NCE, NDE, AFE y NRE. Requiere scope `invoices:read`."
+          },
+          "response": []
+        },
+        {
+          "name": "KuDE de una venta SIFEN",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/sales/:sale_id/sifen/kude/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sales",
+                ":sale_id",
+                "sifen",
+                "kude"
+              ],
+              "variable": [
+                {
+                  "key": "sale_id",
+                  "value": "",
+                  "description": "id de sale_id"
+                }
+              ]
+            },
+            "description": "View-model del KuDE de la factura vigente de la venta (desde el XML firmado). 404 si la venta no tiene documento SIFEN; 409 si aún no hay XML firmado. Requiere scope `invoices:read`."
+          },
+          "response": []
+        },
+        {
+          "name": "Ver un KuDE por token (sin login)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/public/sifen/kude/:token/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "public",
+                "sifen",
+                "kude",
+                ":token"
+              ],
+              "variable": [
+                {
+                  "key": "token",
+                  "value": "",
+                  "description": "id de token"
+                }
+              ]
+            },
+            "description": "View-model de solo lectura del KuDE de un documento. NO requiere API key: la autenticación es el token firmado. 60 por minuto por IP; `Cache-Control: no-store`."
+          },
+          "response": []
+        },
+        {
+          "name": "Crear una caja",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sales-points/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sales-points"
+              ]
+            },
+            "description": "Crea una caja. Una caja SIFEN lleva `billing_system: \"sifen\"` + `sifen_establishment` + `sifen_expedition_point` (3 dígitos, habilitados en los datos fiscales de Paraguay, únicos por caja). Requiere scope `accounting:write`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Caja 1\",\n  \"billing_system\": \"sifen\",\n  \"sifen_establishment\": \"001\",\n  \"sifen_expedition_point\": \"001\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Listar cajas (puntos de venta)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/sales-points/list/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sales-points",
+                "list"
+              ]
+            },
+            "description": "Cajas del tenant, con `billing_system`, `sifen_establishment` y `sifen_expedition_point` (numeración SIFEN por caja). Requiere scope `accounting:read`."
+          },
+          "response": []
+        },
+        {
+          "name": "Eliminar una caja",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/sales-points/:sales_point_id/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sales-points",
+                ":sales_point_id"
+              ],
+              "variable": [
+                {
+                  "key": "sales_point_id",
+                  "value": "",
+                  "description": "id de sales_point_id"
+                }
+              ]
+            },
+            "description": "Se aplican las reglas del servicio (no se elimina la caja por defecto ni una CAEA). Requiere scope `accounting:write`."
+          },
+          "response": []
+        },
+        {
+          "name": "Actualizar una caja",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sales-points/:sales_point_id/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sales-points",
+                ":sales_point_id"
+              ],
+              "variable": [
+                {
+                  "key": "sales_point_id",
+                  "value": "",
+                  "description": "id de sales_point_id"
+                }
+              ]
+            },
+            "description": "Actualiza una caja. Una actualización que toque un campo SIFEN debe mandar `billing_system`, `sifen_establishment` y `sifen_expedition_point` juntos. Requiere scope `accounting:write`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Caja 1\",\n  \"billing_system\": \"sifen\",\n  \"sifen_establishment\": \"001\",\n  \"sifen_expedition_point\": \"001\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Emitir la factura de una venta existente",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sales/generate_invoice/:sale_id/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sales",
+                "generate_invoice",
+                ":sale_id"
+              ],
+              "variable": [
+                {
+                  "key": "sale_id",
+                  "value": "",
+                  "description": "id de sale_id"
+                }
+              ]
+            },
+            "description": "Dispara la emisión fiscal de una venta ya creada; el sistema fiscal (AFIP o SIFEN) lo decide el contribuyente y, en multi-país, el `billing_system` de la venta. En SIFEN la emisión es asíncrona: leé `fiscal` en `GET /sales/{id}/` o suscribite a `invoice.authorized`. El dueño del token mantiene la regla de ventas propias. Requiere scope `invoices:write`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Emitir una nota de crédito sobre una venta",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sales/:sale_id/credit_note/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sales",
+                ":sale_id",
+                "credit_note"
+              ],
+              "variable": [
+                {
+                  "key": "sale_id",
+                  "value": "",
+                  "description": "id de sale_id"
+                }
+              ]
+            },
+            "description": "Nota de crédito de la factura de la venta, AFIP o SIFEN. En SIFEN: NCE (iTiDE 5) con `lineas` obligatorias, motivo por defecto 2 (devolución), 409 hasta que la FE esté aprobada, un renglón no se acredita dos veces y la suma de notas vivas no pasa el total de la FE (SIFEN 2417). Los efectos (stock opcional, cuenta corriente, venta acreditada) son los mismos que en AFIP. Soporta `Idempotency-Key`/`X-Idempotency-Key` (hasta 128 caracteres). 10 por minuto. Requiere scope `invoices:write`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Devolución de mercadería\",\n  \"lineas\": [\n    {\n      \"linea\": 0,\n      \"cantidad\": 1\n    }\n  ],\n  \"restore_stock\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Previsualizar la nota de crédito de una venta",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sales/:sale_id/credit_note/preview/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sales",
+                ":sale_id",
+                "credit_note",
+                "preview"
+              ],
+              "variable": [
+                {
+                  "key": "sale_id",
+                  "value": "",
+                  "description": "id de sale_id"
+                }
+              ]
+            },
+            "description": "En una venta SIFEN devuelve el plan de la NCE (`total`, `lines`, `buckets`, `fe_cdc`) sin emitir ni tomar número. Mismo cuerpo que la emisión (sin `reason` obligatorio). 120 por minuto. Requiere scope `invoices:write`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lineas\": [\n    {\n      \"linea\": 0,\n      \"cantidad\": 1\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Emitir una factura electrónica sin venta",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/bill/sifen/documents",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "sifen",
+                "documents"
+              ]
+            },
+            "description": "Emite una FE (iTiDE 1) SIN venta: misma numeración atómica, firma, persistencia y transmisión en segundo plano que la factura de una venta. El backend calcula base, IVA y total desde los importes brutos de cada renglón. La caja es `sales_point_id` o `establecimiento` + `punto_expedicion` (400 `caja_not_configured` si el par no está configurado; sin ninguno rige el default del contribuyente). Soporta `Idempotency-Key`; `client_reference` devuelve el mismo documento sin consumir otro número (409 `issue_in_progress` si el primero sigue emitiéndose). Es asíncrona: la respuesta trae el CDC en estado `signed`; seguila con `GET /bill/sifen/documents/{cdc}/`. Permiso del dueño del token: `administration:invoices:create`. 30 por minuto. Un token `yf_test_*` recibe 409. Requiere scope `invoices:write`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tipo_de\": 1,\n  \"receptor\": {\n    \"document_type\": \"ci\",\n    \"document_number\": \"1234567\",\n    \"name\": \"María Gómez\"\n  },\n  \"items\": [\n    {\n      \"descripcion\": \"Honorarios octubre\",\n      \"cantidad\": 1,\n      \"importe\": 1100000,\n      \"tasa_iva\": 10\n    }\n  ],\n  \"condicion\": \"contado\",\n  \"client_reference\": \"honorarios-0001\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Probar la conectividad con SIFEN (mTLS + RUC propio)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/bill/sifen/diagnose",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "sifen",
+                "diagnose"
+              ]
+            },
+            "description": "Prueba en vivo con el certificado del tenant: lo carga de Vault, hace el handshake mTLS contra el host de su ambiente (`?wsdl`, no procesa ningún documento) y consulta su propio RUC (siConsRUC). Responde 200 con `ok`, la latencia de cada paso y `actions`: un fallo es un resultado, no un error HTTP. 409 `tax_info_missing` si faltan los datos fiscales. 10 por minuto. `yf_test_*` usa siempre sifen-test. Requiere scope `invoices:write`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Verificar que una caja puede emitir",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/bill/sifen/verify-caja",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "sifen",
+                "verify-caja"
+              ]
+            },
+            "description": "Valida timbrado vigente, que el par establecimiento/punto de expedición esté autorizado para el contribuyente (o la caja `sales_point_id`), que el certificado esté vigente y emitido al MISMO RUC del contribuyente (`certificate_ruc_mismatch`) y el estado del RUC emisor en SIFEN (siConsRUC; si SIFEN no responde queda en `warning`). `valid` es `false` si algún chequeo de severidad `error` falla; cada chequeo trae su `action`. 20 por minuto. Permiso del dueño del token: `configuration:fiscal:edit`. Requiere scope `accounting:write`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"establecimiento\": \"001\",\n  \"punto_expedicion\": \"001\",\n  \"tipo_de\": 1,\n  \"check_ruc\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Consultar un lote enviado (siConsLoteDE)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/bill/sifen/lotes/:protocol",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "sifen",
+                "lotes",
+                ":protocol"
+              ],
+              "variable": [
+                {
+                  "key": "protocol",
+                  "value": "",
+                  "description": "Protocolo del lote SIFEN (solo dígitos): aparece como `lote_protocol` en el documento enviado."
+                }
+              ]
+            },
+            "description": "Consulta en vivo el resultado de un lote que ESTE tenant envió (el `lote_protocol` aparece en el documento). Solo lectura: no cambia el estado local (lo hace el sondeo). 404 `lote_not_found` si el protocolo no es del tenant (no se llama a SIFEN), 400 `invalid_protocol`, 409 si no hay certificado usable, 503 `sifen_unreachable`. 30 por minuto. `yf_test_*` consulta siempre sifen-test. Requiere scope `invoices:read`."
+          },
+          "response": []
+        },
+        {
+          "name": "Tipos de documento SIFEN (iTiDE) y cuáles emite la API",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/bill/sifen/types",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "sifen",
+                "types"
+              ]
+            },
+            "description": "Todos los tipos que construye el núcleo y, para cada uno, si la API lo emite de punta a punta y por qué ruta (`contexts`): FE (1) por venta o sin venta, NCE (5), NDE (6). AFE (4) y NRE (7) figuran con `issuable_via_api: false`. Equivalente de `GET /bill/receipts/types/` de AFIP. Requiere scope `invoices:read`."
+          },
+          "response": []
+        },
+        {
+          "name": "Validar un tipo de documento SIFEN",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/bill/sifen/validate-type",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "bill",
+                "sifen",
+                "validate-type"
+              ]
+            },
+            "description": "¿Se puede emitir `tipo_de` (opcionalmente en un `context`: `sale`, `standalone`, `credit_note`, `debit_note`)? Responde 200 con `valid`, `issuable` y `reason`. Mismas semánticas que `validate-type` de AFIP. 400 `invalid_tipo_de` / `invalid_context`. Requiere scope `invoices:read`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tipo_de\": 1,\n  \"context\": \"standalone\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           },
           "response": []
         }
@@ -6868,6 +8325,185 @@
               ]
             },
             "description": "Solo funciona con un token `yf_test_*`: dropea la base de datos sandbox del tenant entera (todas las colecciones). Un token `yf_live_*` autentica pero recibe 403 — nunca puede alcanzar un drop de base de datos por este endpoint. La próxima escritura recrea la base vacía."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Partner",
+      "description": "Solo para cuentas con contrato API partner (otras cuentas reciben 403 `API_PARTNER_REQUIRED`): alta de los CUIT de los usuarios finales y uso del período. Para facturar por uno de ellos mandá su `id` como `taxpayer_id` en «Emitir factura para un CUIT registrado».",
+      "item": [
+        {
+          "name": "Registrar el CUIT de un usuario final",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/partner/taxpayers/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "partner",
+                "taxpayers"
+              ]
+            },
+            "description": "Solo para cuentas con contrato API partner: cualquier otra cuenta recibe 403 con `error_code: API_PARTNER_REQUIRED`. Da de alta el CUIT de un usuario final. El `id` del contribuyente devuelto es el `taxpayer_id` con el que se factura (`POST /bill/receipts/invoice/`). Antes de emitir, el usuario final debe delegar el servicio WSFE al CUIT de YoFacturo (ver `verify-delegation`). Máximo 500 altas por hora. Requiere scope `taxpayers:write` (solo cuentas partner).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tax_id\": \"20111111112\",\n  \"tax_condition\": \"monotributo\",\n  \"punto_venta\": \"2\",\n  \"business_name\": \"Cliente SA\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Listar los CUIT registrados",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/partner/taxpayers/?limit=100&cursor=&q=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "partner",
+                "taxpayers"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "100",
+                  "description": "Tamaño de página",
+                  "disabled": true
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "description": "`next_cursor` de la página anterior",
+                  "disabled": true
+                },
+                {
+                  "key": "q",
+                  "value": "",
+                  "description": "Búsqueda por CUIT o razón social",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Solo para cuentas con contrato API partner: cualquier otra cuenta recibe 403 con `error_code: API_PARTNER_REQUIRED`. Lista paginada por cursor de los contribuyentes activos. Pedí la página siguiente con `cursor=<next_cursor>` hasta que `next_cursor` sea `null`. Requiere scope `taxpayers:read` (solo cuentas partner)."
+          },
+          "response": []
+        },
+        {
+          "name": "Obtener un CUIT registrado",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/partner/taxpayers/:taxpayer_id/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "partner",
+                "taxpayers",
+                ":taxpayer_id"
+              ],
+              "variable": [
+                {
+                  "key": "taxpayer_id",
+                  "value": "",
+                  "description": "id del contribuyente registrado (campo `id` de la respuesta de alta)"
+                }
+              ]
+            },
+            "description": "Solo para cuentas con contrato API partner: cualquier otra cuenta recibe 403 con `error_code: API_PARTNER_REQUIRED`. Requiere scope `taxpayers:read` (solo cuentas partner)."
+          },
+          "response": []
+        },
+        {
+          "name": "Dar de baja un CUIT",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/partner/taxpayers/:taxpayer_id/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "partner",
+                "taxpayers",
+                ":taxpayer_id"
+              ],
+              "variable": [
+                {
+                  "key": "taxpayer_id",
+                  "value": "",
+                  "description": "id del contribuyente registrado (campo `id` de la respuesta de alta)"
+                }
+              ]
+            },
+            "description": "Solo para cuentas con contrato API partner: cualquier otra cuenta recibe 403 con `error_code: API_PARTNER_REQUIRED`. Baja lógica: no se pueden emitir comprobantes nuevos con ese `taxpayer_id`; los ya emitidos conservan su historial. Requiere scope `taxpayers:write` (solo cuentas partner)."
+          },
+          "response": []
+        },
+        {
+          "name": "Verificar la delegación WSFE de un CUIT",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/partner/taxpayers/:taxpayer_id/verify-delegation/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "partner",
+                "taxpayers",
+                ":taxpayer_id",
+                "verify-delegation"
+              ],
+              "variable": [
+                {
+                  "key": "taxpayer_id",
+                  "value": "",
+                  "description": "id del contribuyente registrado (campo `id` de la respuesta de alta)"
+                }
+              ]
+            },
+            "description": "Solo para cuentas con contrato API partner: cualquier otra cuenta recibe 403 con `error_code: API_PARTNER_REQUIRED`. Prueba contra ARCA si el usuario final delegó el servicio WSFE al CUIT de YoFacturo y guarda el resultado en ese contribuyente. `delegation_verified` es `true`, `false` o `null` (ARCA no contestó: reintentá, el estado guardado no cambia). Máximo 60 por minuto. Requiere scope `taxpayers:write` (solo cuentas partner)."
+          },
+          "response": []
+        },
+        {
+          "name": "Uso y estimado del período",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/partner/usage/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "partner",
+                "usage"
+              ]
+            },
+            "description": "Solo para cuentas con contrato API partner: cualquier otra cuenta recibe 403 con `error_code: API_PARTNER_REQUIRED`. CUIT activos del período (con al menos un comprobante autorizado con CAE real), CUIT extra y el estimado en pesos enteros, calculado por el backend. Requiere scope `taxpayers:read` (solo cuentas partner)."
           },
           "response": []
         }

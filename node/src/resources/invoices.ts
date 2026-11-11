@@ -141,6 +141,14 @@ export class InvoicesResource {
   }
 
   /**
+   * Link público firmado para compartir el comprobante (PDF/HTML) sin login --
+   * `POST /bill/receipts/{id}/public-link/`. El comprobante debe estar aprobado.
+   */
+  link<T = any>(comprobanteId: string): Promise<T> {
+    return this.client.post<T>(`${BASE}/${comprobanteId}/public-link/`, {});
+  }
+
+  /**
    * Autoriza un comprobante en borrador ante AFIP (obtiene el CAE) --
    * `POST /bill/receipts/authorize/{id}/`. A diferencia de `create()` con
    * `autorizar: true`, esta llamada es síncrona: espera a AFIP y, si lo

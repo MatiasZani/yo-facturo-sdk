@@ -8,7 +8,7 @@ SDKs oficiales para la **API de facturación electrónica ARCA (ex AFIP) de Arge
 | Node.js / TypeScript | [`node/`](node/) — `yofacturo` | ![tests](https://img.shields.io/badge/tests-passing-brightgreen) |
 | PHP | [`php/`](php/) — `yofacturo/yofacturo-php` | PSR-4, sin dependencias |
 
-También incluye la [spec OpenAPI 3.1](openapi/) completa y una [colección de Postman](postman/) con las 189 operaciones de la API, agrupadas por área.
+También incluye la [spec OpenAPI 3.1](openapi/) completa y una [colección de Postman](postman/) con las 236 operaciones de la API, agrupadas por área.
 
 ## ¿Qué es la API de YoFacturo?
 
@@ -158,8 +158,13 @@ Los ejemplos completos y ejecutables (Python, Node.js y PHP) están en [`example
 - **`customers`** — clientes (`/customers`): listar, obtener, crear, actualizar, eliminar.
 - **`products`** — productos (`/products`): listar, obtener, crear, actualizar, eliminar.
 - **`sales`** — ventas (`/sales`): listar, obtener, crear, actualizar, eliminar.
+- **`services`** — servicios (`/services`, scope `services:read|write`): listar, obtener, crear, actualizar, eliminar. `list` manda `currency_aware=1` por defecto, igual que `products`.
+- **`rentals`** — alquileres (`/rentals`, scope `rentals:read|write`): mismos métodos y mismo `currency_aware` que `products`.
+- **`appointments`** (`subscription_plans` en Python, `subscriptionPlans` en Node/PHP) — turnos (`/appointments`, scope `appointments:read|write`) y planes de suscripción (`/subscription-plans`, scope `recurring:read|write`): listar, obtener, crear, actualizar, eliminar. Turnos requiere el módulo de turnos habilitado en el plan.
+- **`sifen`** — facturación electrónica de Paraguay (`/bill/sifen`, SIFEN/DNIT): documentos por CDC (listar, obtener, consultar a la SET, eventos, anular, nota de débito, inutilización), KuDE, envío por email y enlace público, nota de crédito por venta, readiness, ambiente, consulta de RUC, numeración, certificados y catálogos; factura sin venta (`create`), sonda de conectividad (`diagnose`), `verify_caja`, consulta de lotes (`lote`) y tipos de documento (`types`, `validate_type`). Nombres: Python `client.sifen.debit_note(...)`, Node/PHP `client.sifen.debitNote(...)`. Guía: [Facturación Paraguay (SIFEN)](https://yo-facturo.com/dev/paraguay-sifen/).
+- **`partner`** — cuentas API partner (`/partner`, solo con contrato partner y scopes `taxpayers:*`): registrar el CUIT de tus usuarios finales (`create_taxpayer`), listar con cursor, obtener, dar de baja, verificar la delegación WSFE (`verify_delegation`) y ver el uso del período (`usage`). Después se factura con `client.invoices.create(taxpayer_id=..., ...)`. Nombres: Python `client.partner.create_taxpayer(...)`, Node/PHP `client.partner.createTaxpayer(...)`.
 
-La spec OpenAPI completa (119 rutas, 189 operaciones — catálogo, ventas, facturación, compras, clientes, operaciones, contabilidad, webhooks y sandbox) está en [`openapi/openapi.json`](openapi/openapi.json) / [`openapi/openapi.yaml`](openapi/openapi.yaml), y también se sirve pública en [`https://api.yo-facturo.com/api/v1/openapi.json`](https://api.yo-facturo.com/api/v1/openapi.json). La [colección de Postman](postman/yofacturo.postman_collection.json) cubre las 189 operaciones, agrupadas en carpetas por área, con `{{baseUrl}}` y `{{apiKey}}` como variables.
+La spec OpenAPI completa (159 rutas, 236 operaciones — catálogo, ventas, facturación, compras, clientes, operaciones, contabilidad, webhooks y sandbox) está en [`openapi/openapi.json`](openapi/openapi.json) / [`openapi/openapi.yaml`](openapi/openapi.yaml), y también se sirve pública en [`https://api.yo-facturo.com/api/v1/openapi.json`](https://api.yo-facturo.com/api/v1/openapi.json). La [colección de Postman](postman/yofacturo.postman_collection.json) cubre las 236 operaciones, agrupadas en carpetas por área, con `{{baseUrl}}` y `{{apiKey}}` como variables.
 
 ## Manejo de errores
 
@@ -202,7 +207,7 @@ Al superarlos, la API responde `429 Too Many Requests`. Los SDKs reintentan solo
 ```
 yo-facturo_sdk/
   openapi/     spec OpenAPI 3.1 (json + yaml)
-  postman/     colección de Postman (189 operaciones)
+  postman/     colección de Postman (236 operaciones)
   python/      SDK de Python (paquete `yofacturo`)
   node/        SDK de Node.js/TypeScript (paquete `yofacturo`)
   php/         SDK de PHP (paquete `yofacturo/yofacturo-php`)
